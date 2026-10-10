@@ -14,8 +14,12 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
 `AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
-配置统一控制三个组件的选择、JSON 输入、SQLite 路径和日志级别，经过
+配置统一控制三个组件的选择、JSON 输入、SQLite 路径、日志级别和日志文件，经过
 Pydantic 校验后交给组合入口；CLI 启动默认执行一次流程并退出，不再设置运行模式。
+
+CLI 使用 Rich 展示统计表格和简短错误提示；Loguru 默认写入 `logs/wemo2.log`，
+不在终端输出运行日志。日志为 UTF-8，10 MB 轮转并保留 7 天的轮转文件，
+失败详情记录在日志文件中。日志路径支持配置文件和 `--log-file` 覆盖。
 
 当前 Python 代码使用 `interfaces.py` 的 `BaseCollector`、`BaseDeduplicator`、`BaseStore`
 三个 ABC 抽象类。`Coordinator` 只依赖这些契约，通过构造函数注入具体实现；

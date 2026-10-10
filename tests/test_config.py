@@ -1,4 +1,3 @@
-import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +34,7 @@ class ConfigTests(unittest.TestCase):
         config = load_config(cwd=self.cwd)
         self.assertEqual((config.collector, config.store), ("pseudo", "pseudo"))
         self.assertEqual(config.database, self.cwd / "data/wemo2.sqlite3")
+        self.assertEqual(config.log_file, self.cwd / "logs/wemo2.log")
 
     def test_priority_and_explicit_default_value(self):
         self.write_config(
@@ -104,19 +104,18 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.database.exists())
         self.assertEqual(run_config(config).unchanged, 3)
 
-    def test_no_arguments_runs_cli_and_outputs_json(self):
+    def test_no_arguments_shows_rich_result_and_writes_file_log(self):
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
             result = CliRunner().invoke(cli, [])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(
-            json.loads(result.stdout),
-            {
-                "collected": 3,
-                "created": 2,
-                "merged": 0,
-                "unchanged": 1,
-            },
-        )
+        self.assertIn("采集完成", result.stdout)
+        self.assertIn("新增", result.stdout)
+        self.assertIn("日志文件", result.stdout)
+        self.assertNotIn("INFO", result.stdout)
+        self.assertEqual(result.stderr, "")
+        log = (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
+        self.assertIn("采集完成", log)
+        self.assertIn("INFO", log)
 
     def test_execution_failure_exits_one_without_success_result(self):
         with (
@@ -126,6 +125,34 @@ class ConfigTests(unittest.TestCase):
             result = CliRunner().invoke(cli, [])
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(result.stdout, "")
+        self.assertIn("执行失败", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        log = (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
+        self.assertIn("RuntimeError: failed", log)
+
+    def test_log_file_priority_and_relative_paths(self):
+        path = self.write_config(
+            'log_file = "logs/file.log"\n', self.cwd / "settings/custom.toml"
+        )
+        file_config = load_config(config_path=path, cwd=self.cwd)
+        self.assertEqual(file_config.log_file, self.cwd / "settings/logs/file.log")
+        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
+            config = self.parse_cli(
+                ["--config", str(path), "--log-file", "logs/cli.log"]
+            )
+        self.assertEqual(config.log_file, self.cwd / "logs/cli.log")
+
+    def test_invalid_log_path_reports_error_before_running(self):
+        blocked = self.cwd / "blocked"
+        blocked.write_text("not a directory", encoding="utf-8")
+        with (
+            patch("wemo2.config.Path.cwd", return_value=self.cwd),
+            patch("wemo2.app.run_config") as run,
+        ):
+            result = CliRunner().invoke(cli, ["--log-file", "blocked/wemo2.log"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("无法初始化日志文件", result.stderr)
+        run.assert_not_called()
 
     def test_help_and_version_do_not_load_config_or_launch(self):
         for option in ("--help", "--version"):

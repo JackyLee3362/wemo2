@@ -7,6 +7,7 @@ import typer
 
 from wemo2 import __version__
 from wemo2.config import load_config
+from wemo2.console import console
 
 
 class CollectorName(StrEnum):
@@ -41,7 +42,7 @@ cli = typer.Typer(
 
 def show_version(value: bool) -> None:
     if value:
-        typer.echo(f"wemo2 {__version__}")
+        console.print(f"wemo2 {__version__}")
         raise typer.Exit()
 
 
@@ -56,6 +57,7 @@ def start(
     json_path: Path | None = typer.Option(None, "--import-json", help="JSON 输入文件"),
     database: Path | None = typer.Option(None, help="SQLite 文件路径"),
     log_level: LogLevel | None = typer.Option(None, help="日志级别"),
+    log_file: Path | None = typer.Option(None, help="日志文件路径"),
     version: bool = typer.Option(
         False, "--version", callback=show_version, is_eager=True, help="显示版本并退出"
     ),
@@ -74,6 +76,8 @@ def start(
         values["database"] = database
     if log_level is not None:
         values["log_level"] = log_level.value
+    if log_file is not None:
+        values["log_file"] = log_file
     if json_path is not None:
         if collector == CollectorName.pseudo:
             raise typer.BadParameter("--collector pseudo 不能同时指定 --import-json")

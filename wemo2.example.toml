@@ -5,6 +5,7 @@ deduplicator = "pseudo"
 store = "pseudo"
 database = "data/wemo2.sqlite3"
 log_level = "INFO"
+log_file = "logs/wemo2.log"
 
 # JSON 采集时改为 collector = "json"，并设置输入路径。
 # json_path = "examples/observations.json"

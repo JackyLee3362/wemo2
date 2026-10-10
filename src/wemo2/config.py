@@ -24,6 +24,7 @@ class AppConfig(BaseModel):
     database: Path = Field(
         default=Path("data/wemo2.sqlite3"), description="SQLite 数据库文件"
     )
+    log_file: Path = Field(default=Path("logs/wemo2.log"), description="运行日志文件")
     log_level: Literal[
         "TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"
     ] = "INFO"
@@ -37,7 +38,7 @@ class AppConfig(BaseModel):
 
 def _resolve_paths(values: dict, directory: Path) -> dict:
     result = dict(values)
-    for key in ("database", "json_path"):
+    for key in ("database", "json_path", "log_file"):
         value = result.get(key)
         if isinstance(value, (str, Path)):
             path = Path(value)

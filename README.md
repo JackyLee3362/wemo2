@@ -18,7 +18,9 @@ uv run wemo2
 
 默认按配置执行一次采集流程并退出。也可使用 `uv run python -m wemo2` 启动，
 或使用 `uv run wemo2 --version` 查看版本。运行不依赖 Tcl/Tk。
-成功结果以 JSON 输出到标准输出，日志写入标准错误；执行失败退出码为 1，参数或配置错误为 2。
+终端使用 Rich 展示结果表格和简短错误提示，运行日志默认写入 `logs/wemo2.log`，
+不向终端打印日志或异常堆栈。执行失败退出码为 1，参数或配置错误为 2。
+日志使用 UTF-8，超过 10 MB 自动轮转，轮转文件保留 7 天。
 
 ## 最小采集流程
 
@@ -100,6 +102,7 @@ deduplicator = "stable"
 store = "sqlite"
 database = "data/wemo2.sqlite3"
 log_level = "INFO"
+log_file = "logs/wemo2.log"
 ```
 
 代码默认使用三个 `pseudo` 组件；JSON 采集时，未显式设置的去重器和存储器
@@ -108,7 +111,8 @@ log_level = "INFO"
 
 JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。配置文件中的相对路径
 以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。
-`--log-level` 可覆盖日志级别。配置模型与加载逻辑位于 `src/wemo2/config.py`，
+`--log-level` 可覆盖日志级别，`--log-file PATH` 可覆盖日志文件；路径遵循相同的配置优先级。
+配置模型与加载逻辑位于 `src/wemo2/config.py`，
 Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。
 
 ## 开发检查

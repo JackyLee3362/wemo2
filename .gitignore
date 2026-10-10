@@ -213,6 +213,7 @@ cython_debug/
 tempCodeRunnerFile.py
 
 # Ruff stuff:
+logs/
 .ruff_cache/
 
 # PyPI configuration file

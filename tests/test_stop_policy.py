@@ -120,7 +120,7 @@ class StopPolicyTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(ValidationError):
                 StopPolicy(**options)
 
-    def test_cli_overrides_file_policy_and_runs_it(self):
+    def test_cli_loads_file_policy_and_runs_it(self):
         with tempfile.TemporaryDirectory() as directory:
             cwd = Path(directory).resolve()
             path = cwd / "wemo2.toml"
@@ -130,8 +130,9 @@ class StopPolicyTests(unittest.TestCase):
             config = load_config({"duplicate_limit": 2}, cwd=cwd)
             self.assertEqual(config.duplicate_stop, "after_n")
             self.assertEqual(config.duplicate_limit, 2)
+            path.write_text('duplicate_stop = "first"\n', encoding="utf-8")
             with patch("wemo2.config.Path.cwd", return_value=cwd):
-                result = CliRunner().invoke(cli, ["--duplicate-stop", "first"])
+                result = CliRunner().invoke(cli, ["--config", str(path)])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("已按重复停止策略结束采集", result.stdout)
 

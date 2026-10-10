@@ -81,7 +81,7 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(config.deduplicator, "new-rule")
             self.assertEqual(config.store, "new-store")
             with patch("wemo2.config.Path.cwd", return_value=cwd):
-                result = CliRunner().invoke(cli, ["--collector", "new-source"])
+                result = CliRunner().invoke(cli, ["--config", str(config_path)])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("采集完成", result.stdout)
             self.assertEqual(

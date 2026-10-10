@@ -31,7 +31,7 @@ Python 和 Python Debugger 扩展，再按 F5 选择“wemo2: 调试 CLI”。�
 先运行完全由模拟组件组成的流程，无需文件、微信或数据库：
 
 ```powershell
-uv run wemo2 --collector pseudo
+uv run wemo2
 ```
 
 默认组合为 `PseudoCollector + PseudoDeduplicator + PseudoStore`，内置三次投递
@@ -39,8 +39,12 @@ uv run wemo2 --collector pseudo
 
 选择不同组件可混合运行，例如模拟采集 + 稳定源 ID 去重 + SQLite 存储：
 
-```powershell
-uv run wemo2 --collector pseudo --deduplicator stable --store sqlite
+在 `wemo2.toml` 中设置：
+
+```toml
+collector = "pseudo"
+deduplicator = "stable"
+store = "sqlite"
 ```
 
 抽象契约位于 `src/wemo2/interfaces.py`：`BaseCollector.collect()`、
@@ -48,21 +52,21 @@ uv run wemo2 --collector pseudo --deduplicator stable --store sqlite
 各实现显式继承抽象类；`Coordinator` 仅依赖抽象类，不含实现选择分支。
 `build_coordinator()` 负责按名称组装，代码中也可直接把自定义实现传入 `Coordinator`。
 
-| 组件 | 模拟实现 | 现有实现 | 选择参数 |
+| 组件 | 模拟实现 | 现有实现 | 配置字段 |
 | --- | --- | --- | --- |
-| 采集 | PseudoCollector，直接产生模型对象 | JsonCollector，文件导入 | `--collector pseudo/json` |
-| 去重 | PseudoDeduplicator，只按 Observation ID 幂等 | Deduplicator，额外按稳定源 ID 匹配 | `--deduplicator pseudo/stable` |
-| 存储 | PseudoStore，单线程内存存储 | SQLiteStore，本地持久化 | `--store pseudo/sqlite` |
+| 采集 | PseudoCollector，直接产生模型对象 | JsonCollector，文件导入 | `collector` |
+| 去重 | PseudoDeduplicator，只按 Observation ID 幂等 | Deduplicator，额外按稳定源 ID 匹配 | `deduplicator` |
+| 存储 | PseudoStore，单线程内存存储 | SQLiteStore，本地持久化 | `store` |
 
 模拟去重器不合并不同 Observation ID 的同一源动态；验证真实身份匹配请选 `stable`。
 
 导入 JSON 文件：
 
 ```powershell
-uv run wemo2 --import-json examples/observations.json
+uv run wemo2 --config wemo2.json.example.toml
 ```
 
-默认存储位置为 `data/wemo2.sqlite3`，使用 `--database PATH` 可更换。
+默认存储位置为 `data/wemo2.sqlite3`，使用配置字段 `database` 可更换。
 再次导入同一文件不会新增动态；相同稳定源 ID 的新观察可更新完整字段并保留修订。
 
 四个组件分别为 `JsonCollector`（JSON 数组采集）、`Deduplicator`（幂等与源身份去重）、
@@ -91,7 +95,7 @@ uv run wemo2 --import-json examples/observations.json
 
 ```powershell
 Copy-Item wemo2.example.toml wemo2.toml
-uv run wemo2 --config wemo2.toml --store sqlite
+uv run wemo2 --config wemo2.toml
 ```
 
 配置文件采用 TOML 顶层字段：
@@ -106,12 +110,14 @@ log_file = "logs/wemo2.log"
 ```
 
 代码默认使用三个 `pseudo` 组件；JSON 采集时，未显式设置的去重器和存储器
-分别默认 `stable` 和 `sqlite`。文件或命令行中明确填写的值始终优先，包括 `pseudo`。
+分别默认 `stable` 和 `sqlite`。文件中明确填写的值始终优先，包括 `pseudo`。
 当前只提供 CLI，已移除 `--mode` 和配置中的 `mode` 字段；已有配置文件需要删除该字段。
 
-JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。配置文件中的相对路径
+CLI 只提供 `--help`、`--version`、`--config`、`--log-file`，其他业务配置由 TOML 文件控制。
+JSON 输入在文件中使用 `json_path`。配置文件中的相对路径
 以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。
-`--log-level` 可覆盖日志级别，`--log-file PATH` 可覆盖日志文件；路径遵循相同的配置优先级。
+日志级别通过 `log_level` 设置，`--log-file PATH` 可覆盖日志文件。
+日志路径遵循命令行 > 配置文件 > 默认值；业务配置遵循配置文件 > 默认值。
 配置模型与加载逻辑位于 `src/wemo2/config.py`，
 Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。
 
@@ -127,13 +133,12 @@ Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查�
 | `after_n` | 本次运行累计重复 N 次后停止，中间遇到新动态不清零 |
 | `never` | 重复后继续采集，默认值 |
 
-```powershell
-uv run wemo2 --duplicate-stop first
-uv run wemo2 --duplicate-stop after_n --duplicate-limit 3
-uv run wemo2 --duplicate-stop never
+```toml
+duplicate_stop = "after_n"
+duplicate_limit = 3
 ```
 
-TOML 使用 `duplicate_stop` 和 `duplicate_limit`，同样遵循命令行 > 文件 > 默认值。
+TOML 使用 `duplicate_stop` 和 `duplicate_limit`，遵循配置文件 > 默认值。
 计数在每次运行开始时重置。提前停止会展示原因，不表示已遍历全部数据。
 策略不会根据正文相同自行猜测重复；能识别哪些重复取决于所选去重器。
 
@@ -153,11 +158,11 @@ stores.register("local", LocalStore, parameters={"path": "database"})
 ```
 
 `parameters` 是“构造参数名 → 配置字段名”。注册表据此创建实例，只传入实现需要的参数。
-`defaults` 可指定采集器推荐的去重器和存储器，用户文件或命令行的显式配置仍优先。
+`defaults` 可指定采集器推荐的去重器和存储器，用户文件的显式配置仍优先。
 `default=True` 指定该类组件的默认实现，`notice` 设置存储结果的展示提示。
 重复名称、错误接口、未实现抽象方法和缺少构造参数均会报错。
 
-注册后可以使用 `--collector windows` 或配置 `collector = "windows"`。
+注册后在配置文件中设置 `collector = "windows"` 即可。
 如果新实现需要全新的配置字段，仍需在 `AppConfig` 中定义其类型和默认值；
 已有配置字段可直接通过参数映射复用。上面的类名仅作扩展示例，当前尚无 Windows 采集实现。
 

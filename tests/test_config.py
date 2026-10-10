@@ -76,22 +76,24 @@ class ConfigTests(unittest.TestCase):
     def test_typer_omitted_values_do_not_overwrite_file(self):
         self.write_config('store = "sqlite"\nlog_level = "DEBUG"\n')
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            config = self.parse_cli(["--log-level", "ERROR"])
+            config = self.parse_cli([])
         self.assertEqual(config.store, "sqlite")
-        self.assertEqual(config.log_level, "ERROR")
+        self.assertEqual(config.log_level, "DEBUG")
 
-    def test_import_command_infers_json(self):
+    def test_json_input_is_loaded_from_config(self):
+        path = self.write_config('collector = "json"\njson_path = "records.json"\n')
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            config = self.parse_cli(["--import-json", "records.json"])
+            config = self.parse_cli(["--config", str(path)])
         self.assertEqual((config.collector, config.store), ("json", "sqlite"))
         self.assertEqual(config.json_path, self.cwd / "records.json")
 
     def test_invalid_cli_input_exits_before_execution(self):
+        path = self.write_config('collector = "json"\n')
         with (
             patch("wemo2.config.Path.cwd", return_value=self.cwd),
             patch("wemo2.app.launch") as application,
         ):
-            result = CliRunner().invoke(cli, ["--collector", "json"])
+            result = CliRunner().invoke(cli, ["--config", str(path)])
         self.assertEqual(result.exit_code, 2)
         application.assert_not_called()
 
@@ -167,12 +169,27 @@ class ConfigTests(unittest.TestCase):
                 loader.assert_not_called()
                 application.assert_not_called()
 
-    def test_typer_rejects_unknown_choice_and_conflicting_options(self):
-        for args in (
-            ["--store", "invalid"],
-            ["--collector", "pseudo", "--import-json", "input.json"],
+    def test_complex_settings_are_not_cli_options(self):
+        for option in (
+            "--collector",
+            "--deduplicator",
+            "--store",
+            "--import-json",
+            "--database",
+            "--log-level",
+            "--duplicate-stop",
+            "--duplicate-limit",
         ):
+            args = [option, "value"]
             with self.subTest(args=args), patch("wemo2.app.launch") as application:
                 result = CliRunner().invoke(cli, args)
                 self.assertEqual(result.exit_code, 2)
                 application.assert_not_called()
+
+    def test_help_only_lists_four_supported_options(self):
+        result = CliRunner().invoke(cli, ["--help"])
+        self.assertEqual(result.exit_code, 0)
+        for option in ("--help", "--version", "--config", "--log-file"):
+            self.assertIn(option, result.stdout)
+        for option in ("--collector", "--store", "--log-level", "--duplicate-stop"):
+            self.assertNotIn(option, result.stdout)

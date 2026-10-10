@@ -1,0 +1,10 @@
+# JSON 文件导入并保存到 SQLite，路径相对于本配置文件所在目录。
+collector = "json"
+json_path = "examples/observations.json"
+deduplicator = "stable"
+store = "sqlite"
+database = "data/wemo2.sqlite3"
+duplicate_stop = "never"
+duplicate_limit = 3
+log_level = "INFO"
+log_file = "logs/wemo2.log"

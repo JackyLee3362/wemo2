@@ -12,7 +12,7 @@ console = Console()
 error_console = Console(stderr=True)
 
 
-def show_result(result: RunResult, store: str, log_file: Path) -> None:
+def show_result(result: RunResult, storage_notice: str | None, log_file: Path) -> None:
     table = Table(title="采集完成")
     table.add_column("读取", justify="right")
     table.add_column("新增", justify="right")
@@ -25,6 +25,6 @@ def show_result(result: RunResult, store: str, log_file: Path) -> None:
         str(result.unchanged),
     )
     console.print(table)
-    if store == "pseudo":
-        console.print("模拟存储：结果仅保留在内存中。", style="yellow")
+    if storage_notice is not None:
+        console.print(storage_notice, style="yellow")
     console.print(Text(f"日志文件：{log_file}"))

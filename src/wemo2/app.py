@@ -7,11 +7,17 @@ from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig
 from wemo2.console import error_console, show_result
 from wemo2.models import RunResult
+from wemo2.registry import IMPORT_COLLECTOR, collectors, stores
 
 
 def import_json(path: str, database: str) -> RunResult:
+    defaults = collectors.get(IMPORT_COLLECTOR).defaults
     coordinator = build_coordinator(
-        "json", "stable", "sqlite", json_path=path, database=database
+        IMPORT_COLLECTOR,
+        defaults["deduplicator"],
+        defaults["store"],
+        json_path=path,
+        database=database,
     )
     with coordinator.store:
         return coordinator.run()
@@ -55,7 +61,8 @@ def launch(config: AppConfig) -> None:
         raise SystemExit(1) from None
     try:
         result = run_config(config)
-        show_result(result, config.store, config.log_file)
+        storage_notice = stores.get(config.store).notice
+        show_result(result, storage_notice, config.log_file)
     except Exception as error:
         logger.exception("流程执行失败")
         error_console.print(Text(f"执行失败：{error}", style="red"))

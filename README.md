@@ -115,6 +115,25 @@ JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。�
 配置模型与加载逻辑位于 `src/wemo2/config.py`，
 Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。
 
+## 添加组件实现
+
+组件名称和实现类统一维护在 `src/wemo2/registry.py`。新实现继承对应抽象类后，
+在该文件导入并注册即可；不用同步修改 CLI 枚举、配置名称列表或组装分支：
+
+```python
+collectors.register("windows", WindowsCollector)
+stores.register("local", LocalStore, parameters={"path": "database"})
+```
+
+`parameters` 是“构造参数名 → 配置字段名”。注册表据此创建实例，只传入实现需要的参数。
+`defaults` 可指定采集器推荐的去重器和存储器，用户文件或命令行的显式配置仍优先。
+`default=True` 指定该类组件的默认实现，`notice` 设置存储结果的展示提示。
+重复名称、错误接口、未实现抽象方法和缺少构造参数均会报错。
+
+注册后可以使用 `--collector windows` 或配置 `collector = "windows"`。
+如果新实现需要全新的配置字段，仍需在 `AppConfig` 中定义其类型和默认值；
+已有配置字段可直接通过参数映射复用。上面的类名仅作扩展示例，当前尚无 Windows 采集实现。
+
 ## 开发检查
 
 编码规范见 [AGENTS.md](AGENTS.md)。Ruff 作为开发依赖随 `uv sync` 安装，负责

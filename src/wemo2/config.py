@@ -6,19 +6,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from wemo2.registry import collectors, deduplicators, stores
+
 
 class AppConfig(BaseModel):
     """应用启动设置；未知键报错，防止配置拼写错误被悄悄忽略。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    collector: Literal["pseudo", "json"] = Field(
-        default="pseudo", description="采集器实现"
+    collector: str = Field(
+        default_factory=collectors.default_name, description="采集器注册名称"
     )
-    deduplicator: Literal["pseudo", "stable"] = Field(
-        default="pseudo", description="去重器实现"
+    deduplicator: str = Field(
+        default_factory=deduplicators.default_name, description="去重器注册名称"
     )
-    store: Literal["pseudo", "sqlite"] = Field(
-        default="pseudo", description="存储器实现"
+    store: str = Field(
+        default_factory=stores.default_name, description="存储器注册名称"
     )
     json_path: Path | None = Field(default=None, description="JSON 采集器的输入文件")
     database: Path = Field(
@@ -30,9 +32,11 @@ class AppConfig(BaseModel):
     ] = "INFO"
 
     @model_validator(mode="after")
-    def require_cli_input(self):
-        if self.collector == "json" and self.json_path is None:
-            raise ValueError("命令行 JSON 采集器需要 json_path 或 --import-json PATH")
+    def validate_components(self):
+        settings = self.model_dump()
+        collectors.validate(self.collector, settings)
+        deduplicators.validate(self.deduplicator, settings)
+        stores.validate(self.store, settings)
         return self
 
 
@@ -66,9 +70,8 @@ def load_config(
     explicit.update(command_values)
     # 保留 JSON 导入的原有默认组合；任何显式设置（即便等于默认值）都优先。
     defaults = AppConfig().model_dump()
-    if explicit.get("collector", defaults["collector"]) == "json":
-        defaults["deduplicator"] = "stable"
-        defaults["store"] = "sqlite"
+    collector_name = explicit.get("collector", defaults["collector"])
+    defaults.update(collectors.get(collector_name).defaults)
     values = _resolve_paths(defaults, directory)
     values.update(file_values)
     values.update(command_values)

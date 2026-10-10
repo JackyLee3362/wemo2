@@ -1,0 +1,19 @@
+[project]
+name = "wemo2"
+version = "0.1.0"
+description = "Memos2"
+readme = "README.md"
+authors = [
+    { name = "Jackylee", email = "jieli.work@qq.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "loguru>=0.7.3",
+]
+
+[project.scripts]
+wemo2 = "wemo2.app:main"
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"

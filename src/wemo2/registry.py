@@ -124,7 +124,7 @@ collectors.register(
         "screenshot_dir": "screenshot_dir",
         "window_title": "window_title",
     },
-    optional_parameters={"window_process_id": "window_process_id"},
+    optional_parameters={"window_process_id": "window_process_id", "route": "route"},
 )
 deduplicators.register("stable", Deduplicator)
 stores.register(

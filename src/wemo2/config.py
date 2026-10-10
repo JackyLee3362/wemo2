@@ -8,7 +8,7 @@ from pydantic import ConfigDict, Field, model_validator
 
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
-from wemo2_collector.models import Platform
+from wemo2_collector.models import Platform, RouteConfig
 
 
 class AppConfig(StopPolicy):
@@ -37,6 +37,7 @@ class AppConfig(StopPolicy):
     window_process_id: int | None = Field(
         default=None, gt=0, description="多实例时指定微信进程"
     )
+    route: RouteConfig = Field(default_factory=RouteConfig, description="页面路由设置")
     database: Path = Field(
         default=Path("data/wemo2.sqlite3"), description="SQLite 数据库文件"
     )
@@ -63,6 +64,14 @@ def _resolve_paths(values: dict, directory: Path) -> dict:
             if not path.is_absolute():
                 path = (directory / path).resolve()
             result[key] = path
+    route = result.get("route")
+    if isinstance(route, dict) and isinstance(route.get("entry_template"), (str, Path)):
+        route = dict(route)
+        path = Path(route["entry_template"])
+        if not path.is_absolute():
+            path = (directory / path).resolve()
+        route["entry_template"] = path
+        result["route"] = route
     return result
 
 

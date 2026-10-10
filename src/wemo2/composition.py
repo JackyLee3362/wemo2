@@ -5,7 +5,7 @@ from pathlib import Path
 from wemo2.coordinator import Coordinator
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
-from wemo2_collector.models import Platform
+from wemo2_collector.models import Platform, RouteConfig
 
 
 def build_coordinator(
@@ -20,6 +20,7 @@ def build_coordinator(
     screenshot_dir: str | Path = "data/screenshot",
     window_title: str = "微信",
     window_process_id: int | None = None,
+    route: RouteConfig | None = None,
 ) -> Coordinator:
     if collector is None:
         collector = collectors.default_name()
@@ -34,6 +35,7 @@ def build_coordinator(
         "screenshot_dir": screenshot_dir,
         "window_title": window_title,
         "window_process_id": window_process_id,
+        "route": route,
     }
     # 在创建任何实例前校验组合，避免无效配置提前打开存储资源。
     collectors.validate(collector, settings)

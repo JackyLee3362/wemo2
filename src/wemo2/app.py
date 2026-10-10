@@ -45,6 +45,7 @@ def run_config(config: AppConfig) -> RunResult:
         screenshot_dir=config.screenshot_dir,
         window_title=config.window_title,
         window_process_id=config.window_process_id,
+        route=config.route,
     )
     with coordinator.store:
         return coordinator.run()

@@ -1,0 +1,14 @@
+# 匹配左侧朋友圈图标，点击后验证同一进程的独立朋友圈窗口，并保存截图。
+collector = "windows_screenshot"
+platform = "windows"
+window_title = "微信"
+screenshot_dir = "data/screenshot"
+log_file = "logs/wemo2.log"
+
+[route]
+target = "moments"
+window_title = "朋友圈"
+match_threshold = 0.9
+reference_scale = 1.25
+sidebar_ratio = 0.1
+timeout_seconds = 5

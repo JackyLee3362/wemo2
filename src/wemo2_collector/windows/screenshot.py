@@ -1,4 +1,4 @@
-"""按 HWND 获取单个窗口图像，保存 PNG 及对应截图元数据。"""
+"""按客户区坐标截取屏幕显示内容，保存 PNG 及截图元数据。"""
 
 import sys
 from datetime import UTC, datetime
@@ -18,8 +18,12 @@ class WindowsScreenshotter(BaseScreenshotter):
     def capture(self, surface: Surface) -> Screenshot:
         if sys.platform != "win32" or surface.platform != Platform.windows:
             raise RuntimeError("截图器仅支持 Windows 窗口")
-        # 使用 HWND 定向截图，不降级为整屏截图，避免截入无关窗口。
-        image = ImageGrab.grab(window=int(surface.surface_id))
+        # HWND/GDI 可能拿不到硬件加速内容，改截已置于前台的可见客户区。
+        bounds = surface.bounds
+        bbox = (bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height)
+        image = ImageGrab.grab(
+            bbox=bbox, all_screens=True, include_layered_windows=True
+        )
         try:
             if image.size != (surface.bounds.width, surface.bounds.height):
                 raise RuntimeError(
@@ -27,8 +31,14 @@ class WindowsScreenshotter(BaseScreenshotter):
                     f"{surface.bounds.width}x{surface.bounds.height} 不一致"
                     f"（DPI 缩放 {surface.scale}），请检查 DPI 或窗口尺寸变化"
                 )
-            if image.convert("RGB").getbbox() is None:
-                raise RuntimeError("微信窗口返回了全黑截图，请确认窗口正常显示")
+            grayscale = image.convert("L")
+            try:
+                histogram = grayscale.histogram()
+            finally:
+                grayscale.close()
+            dark_pixels = sum(histogram[:8])
+            if dark_pixels / (image.width * image.height) >= 0.999:
+                raise RuntimeError("微信截图几乎全黑，请确认桌面未锁定且窗口可见")
             captured_at = datetime.now(UTC)
             frame_id = str(uuid4())
             filename = f"wechat_{captured_at.strftime('%Y%m%dT%H%M%S')}_{frame_id}.png"

@@ -17,6 +17,57 @@ from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
 
 class WindowsScreenshotTests(unittest.TestCase):
+    def test_near_black_frame_with_one_white_pixel_is_rejected(self):
+        image = Image.new("RGB", (80, 60), "black")
+        image.putpixel((0, 0), (255, 255, 255))
+        with (
+            patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+            patch(
+                "wemo2_collector.windows.screenshot.ImageGrab.grab", return_value=image
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "几乎全黑"):
+                WindowsScreenshotter(self.path).capture(self.surface)
+        self.assertEqual(list(self.path.glob("*.png")), [])
+
+    def test_prepare_capture_activates_target_and_accepts_negative_monitor_coordinates(
+        self,
+    ):
+        driver = WindowsDriver()
+        driver.window = MagicMock()
+        driver.user32 = MagicMock()
+        driver.user32.GetForegroundWindow.return_value = 123
+        metrics = {76: -200, 77: 0, 78: 1200, 79: 800}
+        driver.user32.GetSystemMetrics.side_effect = metrics.__getitem__
+        with (
+            patch.object(driver, "current_surface", return_value=self.surface),
+            patch("wemo2_collector.windows.driver.time.sleep"),
+        ):
+            self.assertEqual(driver.prepare_capture(), self.surface)
+        driver.window.SetActive.assert_called_once()
+
+    def test_prepare_capture_rejects_window_outside_virtual_screen(self):
+        driver = WindowsDriver()
+        driver.window = MagicMock()
+        driver.user32 = MagicMock()
+        driver.user32.GetForegroundWindow.return_value = 123
+        metrics = {76: 0, 77: 0, 78: 1000, 79: 800}
+        driver.user32.GetSystemMetrics.side_effect = metrics.__getitem__
+        with (
+            patch.object(driver, "current_surface", return_value=self.surface),
+            patch("wemo2_collector.windows.driver.time.sleep"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "超出屏幕"):
+                driver.prepare_capture()
+
+    def test_capture_is_rejected_if_foreground_focus_changes(self):
+        driver = WindowsDriver()
+        driver.user32 = MagicMock()
+        driver.user32.GetForegroundWindow.return_value = 456
+        with patch.object(driver, "current_surface", return_value=self.surface):
+            with self.assertRaisesRegex(RuntimeError, "失去前台焦点"):
+                driver.verify_capture(self.surface)
+
     def test_surface_uses_client_size_and_screen_origin_instead_of_window_frame(self):
         user32 = MagicMock()
         user32.IsWindow.return_value = True
@@ -85,7 +136,11 @@ class WindowsScreenshotTests(unittest.TestCase):
             for _ in range(2):
                 grab.return_value = Image.new("RGB", (80, 60), "white")
                 frames.append(screenshotter.capture(self.surface))
-            grab.assert_called_with(window=123)
+            grab.assert_called_with(
+                bbox=(-100, 50, -20, 110),
+                all_screens=True,
+                include_layered_windows=True,
+            )
         self.assertNotEqual(frames[0].image_path, frames[1].image_path)
         with Image.open(frames[0].image_path) as image:
             self.assertEqual(image.size, (80, 60))
@@ -124,9 +179,10 @@ class WindowsScreenshotTests(unittest.TestCase):
                 return_value=self.surface,
             ),
             patch(
-                "wemo2_collector.windows.driver.WindowsDriver.current_surface",
+                "wemo2_collector.windows.driver.WindowsDriver.prepare_capture",
                 return_value=self.surface,
             ),
+            patch("wemo2_collector.windows.driver.WindowsDriver.verify_capture"),
             patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
             patch(
                 "wemo2_collector.windows.screenshot.ImageGrab.grab",
@@ -145,6 +201,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         coordinator = build_coordinator("windows_screenshot", screenshot_dir=self.path)
         driver = MagicMock()
         driver.attach.return_value = self.surface
+        driver.prepare_capture.return_value = self.surface
         coordinator.collector.driver = driver
         with patch(
             "wemo2_collector.windows.screenshot.ImageGrab.grab",

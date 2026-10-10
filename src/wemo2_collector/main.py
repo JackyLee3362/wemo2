@@ -22,9 +22,10 @@ def run_collector(config: AppConfig) -> list[Path]:
         collector.stop()
 
 
-def main() -> None:
+def main(config_path: Path | None = None) -> None:
     """读取项目根目录的截图配置，便于 VS Code 直接启动。"""
-    config_path = Path(__file__).resolve().parents[2] / "wemo2.screenshot.toml"
+    if config_path is None:
+        config_path = Path(__file__).resolve().parents[2] / "wemo2.screenshot.toml"
     config = load_config(config_path=config_path)
     logger.remove()
     config.log_file.parent.mkdir(parents=True, exist_ok=True)

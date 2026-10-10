@@ -75,3 +75,16 @@ class TextBlock(BaseModel):
     text: str
     bounds: Rect  # 截图局部像素坐标。
     confidence: float = Field(ge=0, le=1)
+
+
+class RouteConfig(BaseModel):
+    """首版朋友圈路由配置；none 保持只截图，moments 执行入口导航。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    target: str = Field(default="none", pattern=r"^(none|moments)$")
+    entry_template: Path = Path(__file__).parent / "assets/moments_entry.png"
+    reference_scale: float = Field(default=1.25, gt=0)  # 模板来自 125% DPI 截图。
+    match_threshold: float = Field(default=0.9, gt=0, le=1)
+    sidebar_ratio: float = Field(default=0.1, gt=0, le=0.25)
+    window_title: str = Field(default="朋友圈", min_length=1)  # 跳转后的独立窗口标题。
+    timeout_seconds: float = Field(default=5.0, gt=0, le=60)

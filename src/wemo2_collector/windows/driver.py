@@ -1,8 +1,10 @@
-"""只读连接微信窗口；不激活窗口或模拟输入。"""
+"""连接微信窗口并在截图前置于前台，不点击或输入内容。"""
 
 import ctypes
 import sys
+import time
 from ctypes import wintypes
+from datetime import UTC, datetime
 
 from wemo2_collector.interfaces import BaseDriver
 from wemo2_collector.models import LocatedTarget, Platform, Rect, Screenshot, Surface
@@ -44,6 +46,8 @@ class WindowsDriver(BaseDriver):
             ctypes.POINTER(wintypes.POINT),
         ]
         self.user32.GetDpiForWindow.argtypes = [wintypes.HWND]
+        self.user32.GetForegroundWindow.restype = wintypes.HWND
+        self.user32.GetSystemMetrics.argtypes = [ctypes.c_int]
         self.initializer = uia.UIAutomationInitializerInThread()
         self.initializer.__enter__()
         matches = []
@@ -78,7 +82,7 @@ class WindowsDriver(BaseDriver):
         if self.user32.IsIconic(handle):
             raise RuntimeError("微信窗口已最小化，请先还原窗口")
         rect = wintypes.RECT()
-        # Pillow 的 HWND 截图使用客户区，不能与整个窗口外框的尺寸比较。
+        # 读取客户区的物理像素范围，供屏幕截图裁切。
         if not self.user32.GetClientRect(handle, ctypes.byref(rect)):
             raise ctypes.WinError(ctypes.get_last_error())
         origin = wintypes.POINT(rect.left, rect.top)
@@ -99,8 +103,83 @@ class WindowsDriver(BaseDriver):
             scale=dpi / 96,
         )
 
+    def prepare_capture(self) -> Surface:
+        """切到前台并确认整个客户区在显示器范围内，避免截到编辑器或空白区域。"""
+        surface = self.current_surface()
+        self.window.SetActive()
+        for _ in range(10):
+            if self.user32.GetForegroundWindow() == int(surface.surface_id):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("无法将微信切到前台，请手动打开微信后重试")
+        time.sleep(0.2)  # 等待窗口合成器完成前台重绘。
+        surface = self.current_surface()
+        if self.user32.GetForegroundWindow() != int(surface.surface_id):
+            raise RuntimeError("截图前微信失去前台焦点，请重新运行")
+        left = self.user32.GetSystemMetrics(76)
+        top = self.user32.GetSystemMetrics(77)
+        right = left + self.user32.GetSystemMetrics(78)
+        bottom = top + self.user32.GetSystemMetrics(79)
+        bounds = surface.bounds
+        if (
+            bounds.x < left
+            or bounds.y < top
+            or bounds.x + bounds.width > right
+            or bounds.y + bounds.height > bottom
+        ):
+            raise RuntimeError("微信客户区超出屏幕范围，请将窗口完整移入屏幕后重试")
+        return surface
+
+    def verify_capture(self, surface: Surface) -> None:
+        """保存前后确认目标范围和前台窗口没有变化。"""
+        if self.current_surface() != surface:
+            raise RuntimeError("截图时微信窗口发生变化，请重试")
+        if self.user32.GetForegroundWindow() != int(surface.surface_id):
+            raise RuntimeError("截图时微信失去前台焦点，请重试")
+
     def click(self, frame: Screenshot, target: LocatedTarget) -> None:
-        raise NotImplementedError("当前阶段只支持截图，不执行点击")
+        if target.frame_id != frame.frame_id:
+            raise RuntimeError("定位结果不属于当前截图，拒绝点击")
+        age = (datetime.now(UTC) - frame.captured_at).total_seconds()
+        if age < 0 or age > 5:
+            raise RuntimeError("截图已经过期，请重新定位后点击")
+        bounds = target.bounds
+        if (
+            bounds.x < 0
+            or bounds.y < 0
+            or bounds.x + bounds.width > frame.surface.bounds.width
+            or bounds.y + bounds.height > frame.surface.bounds.height
+        ):
+            raise RuntimeError("定位目标超出客户区，拒绝点击")
+        self.verify_capture(frame.surface)
+        x = frame.surface.bounds.x + bounds.x + bounds.width // 2
+        y = frame.surface.bounds.y + bounds.y + bounds.height // 2
+        import uiautomation as uia
+
+        uia.Click(x, y, waitTime=0.1)
+
+    def switch_to_window(self, title: str) -> bool:
+        """仅在已连接微信进程内寻找路由目标窗口，不重新初始化会话。"""
+        if self.window is None:
+            raise RuntimeError("微信窗口尚未连接")
+        import uiautomation as uia
+
+        process_id = self.window.ProcessId
+        matches = []
+        for window in uia.GetRootControl().GetChildren():
+            if window.Name != title or window.ProcessId != process_id:
+                continue
+            if window.NativeWindowHandle and self.user32.IsWindowVisible(
+                window.NativeWindowHandle
+            ):
+                matches.append(window)
+        if not matches:
+            return False
+        if len(matches) != 1:
+            raise RuntimeError(f"微信进程中有多个“{title}”窗口，不能确定路由目标")
+        self.window = matches[0]
+        return True
 
     def scroll(self, surface: Surface, distance: int) -> None:
         raise NotImplementedError("当前阶段只支持截图，不执行滚动")

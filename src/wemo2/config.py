@@ -7,14 +7,10 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-
 class AppConfig(BaseModel):
     """应用启动设置；未知键报错，防止配置拼写错误被悄悄忽略。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    mode: Literal["gui", "cli"] = Field(
-        default="gui", description="桌面模式或执行后退出"
-    )
     collector: Literal["pseudo", "json"] = Field(
         default="pseudo", description="采集器实现"
     )
@@ -34,7 +30,7 @@ class AppConfig(BaseModel):
 
     @model_validator(mode="after")
     def require_cli_input(self):
-        if self.mode == "cli" and self.collector == "json" and self.json_path is None:
+        if self.collector == "json" and self.json_path is None:
             raise ValueError("命令行 JSON 采集器需要 json_path 或 --import-json PATH")
         return self
 
@@ -70,5 +66,3 @@ def load_config(
     if explicit.get("collector", defaults["collector"]) == "json":
         defaults.update(deduplicator="stable", store="sqlite")
     return AppConfig.model_validate(_resolve_paths(defaults, directory) | explicit)
-
-

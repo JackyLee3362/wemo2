@@ -10,11 +10,6 @@ from wemo2 import __version__
 from wemo2.config import load_config
 
 
-class Mode(str, Enum):
-    gui = "gui"
-    cli = "cli"
-
-
 class CollectorName(str, Enum):
     pseudo = "pseudo"
     json = "json"
@@ -52,7 +47,6 @@ def show_version(value: bool) -> None:
 @cli.command()
 def start(
     config: Annotated[Path | None, typer.Option("--config", help="TOML 文件，默认尝试 wemo2.toml")] = None,
-    mode: Annotated[Mode | None, typer.Option(help="桌面或命令行模式")] = None,
     collector: Annotated[CollectorName | None, typer.Option(help="选择采集器")] = None,
     deduplicator: Annotated[DeduplicatorName | None, typer.Option(help="选择去重器")] = None,
     store: Annotated[StoreName | None, typer.Option(help="选择存储器")] = None,
@@ -65,7 +59,7 @@ def start(
     values = {
         key: value.value if isinstance(value, Enum) else value
         for key, value in {
-            "mode": mode, "collector": collector, "deduplicator": deduplicator,
+            "collector": collector, "deduplicator": deduplicator,
             "store": store, "json_path": json_path, "database": database, "log_level": log_level,
         }.items() if value is not None
     }
@@ -73,14 +67,12 @@ def start(
         if collector == CollectorName.pseudo:
             raise typer.BadParameter("--collector pseudo 不能同时指定 --import-json")
         values.setdefault("collector", "json")
-    if "collector" in values:
-        values.setdefault("mode", "cli")
     try:
         settings = load_config(values, config)
     except (OSError, ValueError, TypeError) as error:
         raise typer.BadParameter(str(error)) from error
 
-    # 延迟导入桌面层，--help/--version 不会启动应用。
+    # 延迟导入执行层，--help/--version 不会启动采集流程。
     from wemo2.app import launch
 
     launch(settings)

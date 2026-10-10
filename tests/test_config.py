@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -6,9 +7,9 @@ from unittest.mock import patch
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from wemo2.app import launch, run_config
+from wemo2.app import run_config
 from wemo2.cli import cli
-from wemo2.config import AppConfig, load_config
+from wemo2.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
@@ -32,7 +33,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_code_defaults_when_auto_file_is_absent(self):
         config = load_config(cwd=self.cwd)
-        self.assertEqual((config.mode, config.collector, config.store), ("gui", "pseudo", "pseudo"))
+        self.assertEqual((config.collector, config.store), ("pseudo", "pseudo"))
         self.assertEqual(config.database, self.cwd / "data/wemo2.sqlite3")
 
     def test_priority_and_explicit_default_value(self):
@@ -53,34 +54,31 @@ class ConfigTests(unittest.TestCase):
     def test_explicit_missing_file_and_invalid_config_report_errors(self):
         with self.assertRaises(FileNotFoundError):
             load_config(config_path="missing.toml", cwd=self.cwd)
-        for content in ('unknown = "value"', 'store = "memos"', 'mode = "cli"\ncollector = "json"'):
+        for content in ('unknown = "value"', 'store = "memos"', 'collector = "json"'):
             with self.subTest(content=content):
                 self.write_config(content)
                 with self.assertRaises(ValidationError):
                     load_config(cwd=self.cwd)
 
     def test_json_defaults_do_not_override_explicit_file_options(self):
-        self.write_config('collector = "json"\n')
+        self.write_config('collector = "json"\njson_path = "input.json"\n')
         config = load_config(cwd=self.cwd)
         self.assertEqual((config.deduplicator, config.store), ("stable", "sqlite"))
-        self.write_config('collector = "json"\nstore = "pseudo"\n')
+        self.write_config('collector = "json"\njson_path = "input.json"\nstore = "pseudo"\n')
         self.assertEqual(load_config(cwd=self.cwd).store, "pseudo")
 
     def test_typer_omitted_values_do_not_overwrite_file(self):
-        self.write_config('mode = "cli"\nstore = "sqlite"\nlog_level = "DEBUG"\n')
+        self.write_config('store = "sqlite"\nlog_level = "DEBUG"\n')
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
             config = self.parse_cli(["--log-level", "ERROR"])
-        self.assertEqual(config.mode, "cli")
         self.assertEqual(config.store, "sqlite")
         self.assertEqual(config.log_level, "ERROR")
 
-    def test_import_command_infers_json_and_cli_and_honors_mode(self):
+    def test_import_command_infers_json(self):
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
             config = self.parse_cli(["--import-json", "records.json"])
-            gui = self.parse_cli(["--collector", "pseudo", "--mode", "gui"])
-        self.assertEqual((config.collector, config.mode, config.store), ("json", "cli", "sqlite"))
+        self.assertEqual((config.collector, config.store), ("json", "sqlite"))
         self.assertEqual(config.json_path, self.cwd / "records.json")
-        self.assertEqual(gui.mode, "gui")
 
     def test_invalid_cli_input_exits_before_execution(self):
         with patch("wemo2.config.Path.cwd", return_value=self.cwd), patch("wemo2.app.launch") as application:
@@ -89,18 +87,25 @@ class ConfigTests(unittest.TestCase):
         application.assert_not_called()
 
     def test_cli_config_runs_selected_store(self):
-        self.write_config('mode = "cli"\nstore = "sqlite"\ndeduplicator = "stable"\ndatabase = "backup.sqlite3"\n')
+        self.write_config('store = "sqlite"\ndeduplicator = "stable"\ndatabase = "backup.sqlite3"\n')
         config = load_config(cwd=self.cwd)
         self.assertEqual(run_config(config).created, 2)
         self.assertTrue(config.database.exists())
         self.assertEqual(run_config(config).unchanged, 3)
 
-    def test_gui_startup_receives_merged_config(self):
-        config = AppConfig(store="sqlite", log_level="ERROR")
-        with patch("wemo2.app.create_window") as window:
-            launch(config)
-        window.assert_called_once_with(config=config)
-        window.return_value.mainloop.assert_called_once()
+    def test_no_arguments_runs_cli_and_outputs_json(self):
+        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
+            result = CliRunner().invoke(cli, [])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(json.loads(result.stdout), {
+            "collected": 3, "created": 2, "merged": 0, "unchanged": 1,
+        })
+
+    def test_execution_failure_exits_one_without_success_result(self):
+        with patch("wemo2.config.Path.cwd", return_value=self.cwd), patch("wemo2.app.run_config", side_effect=RuntimeError("failed")):
+            result = CliRunner().invoke(cli, [])
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(result.stdout, "")
 
     def test_help_and_version_do_not_load_config_or_launch(self):
         for option in ("--help", "--version"):

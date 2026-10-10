@@ -2,11 +2,11 @@
 
 版本：`0.1.0`。状态：完整目标契约草案，已有最小本地实现。
 
-当前实现范围：`JsonCollector` 读取 Observation 数组，`Deduplicator` 使用 Observation ID 和稳定源 ID 去重，`SQLiteStore` 原子保存采集记录、动态和修订，`Coordinator` 按记录串联处理。可通过 Tkinter 或命令行导入。尚未实现下文完整的分页、媒体、候选审核、检查点及远端同步契约；无稳定源 ID 时保留独立记录，合并仅处理顶层字段完整度。Windows/Android 真实采集器及 Memos 适配器尚未实现。
+当前实现范围：`JsonCollector` 读取 Observation 数组，`Deduplicator` 使用 Observation ID 和稳定源 ID 去重，`SQLiteStore` 原子保存采集记录、动态和修订，`Coordinator` 按记录串联处理。通过 CLI 导入并执行。尚未实现下文完整的分页、媒体、候选审核、检查点及远端同步契约；无稳定源 ID 时保留独立记录，合并仅处理顶层字段完整度。Windows/Android 真实采集器及 Memos 适配器尚未实现。
 
 wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个独立模块。本文先定义与语言、框架、采集技术和存储位置无关的数据契约；视觉识别、控件访问、数据库读取均作为可替换的采集适配器。
 
-首版技术选型：Python 3.12+，使用 uv 管理项目和依赖，Loguru 记录日志，Tkinter 提供桌面交互。首版采集源为 Windows 微信，后续增加 Android 采集适配器；平台差异封装在 Collector 内，继续使用本文的 JSON 契约。
+首版技术选型：Python 3.12+，使用 uv 管理项目和依赖，Loguru 记录日志，Typer 提供 CLI。优先实现 CLI，Tkinter 界面留待后续实现，当前代码不依赖 Tcl/Tk。首版采集源为 Windows 微信，后续增加 Android 采集适配器；平台差异封装在 Collector 内，继续使用本文的 JSON 契约。
 
 最终持久化与展示目标为 Memos，通过 Memos 适配器保存动态与媒体并利用其界面展示。具体 API、认证和字段映射在接入时按部署版本确认。Memos 未必直接提供本文要求的事务、身份索引和检查点，因此本地状态库负责幂等、修订、待办和检查点，Memos 写入通过持久化待办重试并记录远端 ID。一次本地提交不等于 Memos 同步完成，任务结果需单独报告同步状态。当前已实现最小 SQLite 本地存储，尚未实现 Memos 适配器。
 
@@ -14,8 +14,8 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
 `AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
-配置统一控制运行模式、三个组件的选择、JSON 输入、SQLite 路径和日志级别，经过
-Pydantic 校验后交给组合入口；桌面和命令行都使用同一份最终配置。
+配置统一控制三个组件的选择、JSON 输入、SQLite 路径和日志级别，经过
+Pydantic 校验后交给组合入口；CLI 启动默认执行一次流程并退出，不再设置运行模式。
 
 当前 Python 代码使用 `interfaces.py` 的 `BaseCollector`、`BaseDeduplicator`、`BaseStore`
 三个 ABC 抽象类。`Coordinator` 只依赖这些契约，通过构造函数注入具体实现；
@@ -379,7 +379,7 @@ save_checkpoint(checkpoint, expected_checkpoint_version) -> Checkpoint
 1. 先实现 `JsonImportCollector`，读取符合 3.1 的 JSON 文件，验证模块之间能互换数据。
 2. 使用 SQLite 保存 Observation、Post、修订、身份索引、回执、媒体待办和检查点；媒体保存到本地 `assets/`，按哈希组织。
 3. 实现强身份去重、Observation 幂等、文件哈希去重和待确认候选；先不实现自动模糊合并。
-4. 编排器支持手动执行和周期执行；接入 Windows 采集器和 Memos 适配器，后续扩展 Android。耗时采集与同步运行在工作线程，Tkinter 主线程通过队列接收进度，避免窗口阻塞。
+4. 优先通过 CLI 手动执行，后续增加周期执行、Windows 采集器和 Memos 适配器，再扩展 Android。Tkinter 界面作为后续交互层接入既有配置和协调器。
 
 实现阶段的验收场景：同一 Observation 重放不增量；同一源动态内容更新保留修订；同文不同源动态不误合并；部分采集不清空完整字段；进程在保存和推进游标之间中断可恢复；相同媒体重复下载只保存一份；媒体失败保留可重试待办；并发强身份写入只产生一条正式动态。
 

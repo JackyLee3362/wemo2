@@ -3,7 +3,7 @@
 朋友圈备份工具，使用 Python 实现自动采集、去重与持久化。
 
 - 支持平台：Windows
-- 桌面交互：Tkinter
+- 首版交互：CLI；Tkinter 界面留待后续实现。
 - 日志：Loguru
 - 命令行：Typer
 - 最终持久化与展示：Memos
@@ -16,8 +16,9 @@ uv sync
 uv run wemo2
 ```
 
-也可使用 `uv run python -m wemo2` 启动，或使用 `uv run wemo2 --version` 查看版本。
-Python 发行版需要包含 Tcl/Tk；可通过 `uv run python -m tkinter` 检查。
+默认按配置执行一次采集流程并退出。也可使用 `uv run python -m wemo2` 启动，
+或使用 `uv run wemo2 --version` 查看版本。运行不依赖 Tcl/Tk。
+成功结果以 JSON 输出到标准输出，日志写入标准错误；执行失败退出码为 1，参数或配置错误为 2。
 
 ## 最小采集流程
 
@@ -29,7 +30,6 @@ uv run wemo2 --collector pseudo
 
 默认组合为 `PseudoCollector + PseudoDeduplicator + PseudoStore`，内置三次投递
 （两条动态，其中一条重复），输出新增 2 条、未变更 1 条。PseudoStore 只存内存，退出即丢失。
-桌面窗口点击“运行当前配置”执行所选组件组合。
 
 选择不同组件可混合运行，例如模拟采集 + 稳定源 ID 去重 + SQLite 存储：
 
@@ -50,15 +50,13 @@ uv run wemo2 --collector pseudo --deduplicator stable --store sqlite
 
 模拟去重器不合并不同 Observation ID 的同一源动态；验证真实身份匹配请选 `stable`。
 
-桌面窗口点击“导入 JSON”，或运行：
+导入 JSON 文件：
 
 ```powershell
 uv run wemo2 --import-json examples/observations.json
 ```
 
 默认存储位置为 `data/wemo2.sqlite3`，使用 `--database PATH` 可更换。
-桌面“导入 JSON”操作沿用当前配置的去重器和存储器，默认配置下保存到内存；
-需要写入数据库时，请在配置中选择 `store = "sqlite"`。
 再次导入同一文件不会新增动态；相同稳定源 ID 的新观察可更新完整字段并保留修订。
 
 四个组件分别为 `JsonCollector`（JSON 数组采集）、`Deduplicator`（幂等与源身份去重）、
@@ -87,13 +85,12 @@ uv run wemo2 --import-json examples/observations.json
 
 ```powershell
 Copy-Item wemo2.example.toml wemo2.toml
-uv run wemo2 --config wemo2.toml --mode cli --store sqlite
+uv run wemo2 --config wemo2.toml --store sqlite
 ```
 
 配置文件采用 TOML 顶层字段：
 
 ```toml
-mode = "cli"
 collector = "pseudo"
 deduplicator = "stable"
 store = "sqlite"
@@ -101,10 +98,9 @@ database = "data/wemo2.sqlite3"
 log_level = "INFO"
 ```
 
-代码默认使用 `gui` 模式和三个 `pseudo` 组件；JSON 采集时，未显式设置的去重器和存储器
+代码默认使用三个 `pseudo` 组件；JSON 采集时，未显式设置的去重器和存储器
 分别默认 `stable` 和 `sqlite`。文件或命令行中明确填写的值始终优先，包括 `pseudo`。
-`--collector` 或 `--import-json` 默认执行后退出，可用 `--mode gui` 改为桌面模式。
-仅修改其他选项不会隐式切换模式。
+当前只提供 CLI，已移除 `--mode` 和配置中的 `mode` 字段；已有配置文件需要删除该字段。
 
 JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。配置文件中的相对路径
 以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。

@@ -1,6 +1,5 @@
 # 复制为 wemo2.toml 后，应用启动会自动读取。
 # 命令行显式选项 > 本文件 > 代码默认配置。
-mode = "gui"
 collector = "pseudo"
 deduplicator = "pseudo"
 store = "pseudo"

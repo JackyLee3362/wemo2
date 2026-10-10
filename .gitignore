@@ -105,6 +105,7 @@ ipython_config.py
 #   commonly ignored for libraries.
 # uv.lock
 .uv-python/
+data/
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.

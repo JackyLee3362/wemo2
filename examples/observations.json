@@ -1,0 +1,21 @@
+[
+  {
+    "schema_version": "0.1.0",
+    "observation_id": "example-observation-001",
+    "account_scope": "example-account",
+    "observed_at": "2026-10-10T13:00:00Z",
+    "source": {
+      "platform": "wechat_moments",
+      "method": "import",
+      "native_post_id": "example-post-001",
+      "native_id_namespace": "example-account",
+      "native_post_id_stable": true
+    },
+    "content": {
+      "author": { "display_name": "示例用户" },
+      "text": "今天去看海。",
+      "media": []
+    },
+    "field_status": { "author": "partial", "text": "complete", "media": "complete" }
+  }
+]

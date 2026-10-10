@@ -1,4 +1,4 @@
-"""Windows 朋友圈路由：定位入口、一次点击、验证目标窗口。"""
+"""Windows 页面路由：定位指南针入口，截图验证发现菜单。"""
 
 import time
 from pathlib import Path
@@ -32,23 +32,25 @@ class WindowsPageRouter(BasePageRouter):
         return frame
 
     def detect(self, frame: Screenshot) -> Page:
-        if frame.surface != self.driver.current_surface():
+        # 页面分类只依赖截图；实时性与焦点由截图/点击流程分别校验。
+        selected = self.locator.locate(frame, "discover_selected")
+        if selected is not None:
+            menu = self.locator.locate(frame, "discover_menu")
+            if menu is not None:
+                return Page.discover
             return Page.unknown
-        if self.driver.window.Name == self.config.window_title:
-            return Page.moments
         if self.locator.locate(frame, "moments_entry") is not None:
             return Page.home
         return Page.unknown
 
     def ensure(self, page: Page) -> Screenshot:
-        if page != Page.moments:
-            raise ValueError("首版路由只支持朋友圈")
-        # 已打开目标窗口时直接切换，不重复点击入口。
-        if self.driver.switch_to_window(self.config.window_title):
-            frame = self._capture()
-            if self.detect(frame) == page:
-                return frame
+        if page != Page.discover:
+            raise ValueError(
+                "当前参考图只能验证发现菜单；朋友圈动态列表需另行定义页面特征"
+            )
         frame = self._capture()
+        if self.detect(frame) == page:
+            return frame
         target = self.locator.locate(frame, "moments_entry")
         if target is None:
             raise RuntimeError(
@@ -60,15 +62,12 @@ class WindowsPageRouter(BasePageRouter):
         self.driver.click(frame, target)
         deadline = time.monotonic() + self.config.timeout_seconds
         while time.monotonic() < deadline:
-            if self.driver.switch_to_window(self.config.window_title):
-                result = self._capture()
-                if self.detect(result) == page:
-                    logger.info("已验证朋友圈窗口")
-                    return result
+            result = self._capture()
+            if self.detect(result) == page:
+                logger.info("已通过选中图标与菜单特征验证发现页面")
+                return result
             time.sleep(0.2)
-        raise RuntimeError(
-            f"点击后未找到同一微信进程的“{self.config.window_title}”窗口，路由超时"
-        )
+        raise RuntimeError("点击后未识别到选中的指南针与发现菜单，路由超时")
 
     def advance(self) -> Screenshot | None:
         raise NotImplementedError("当前只实现朋友圈入口路由，尚未实现滚动采集")

@@ -19,6 +19,7 @@ class Page(StrEnum):
     unknown = "unknown"
     login = "login"
     home = "home"
+    discover = "discover"  # 含朋友圈入口的发现菜单，不是动态列表。
     moments = "moments"
     detail = "detail"
     modal = "modal"
@@ -78,13 +79,15 @@ class TextBlock(BaseModel):
 
 
 class RouteConfig(BaseModel):
-    """首版朋友圈路由配置；none 保持只截图，moments 执行入口导航。"""
+    """页面路由配置；none 只截图，discover 打开并验证发现菜单。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    target: str = Field(default="none", pattern=r"^(none|moments)$")
+    target: str = Field(default="none", pattern=r"^(none|discover)$")
     entry_template: Path = Path(__file__).parent / "assets/moments_entry.png"
+    selected_template: Path = Path(__file__).parent / "assets/discover_selected.png"
+    menu_template: Path = Path(__file__).parent / "assets/discover_menu.png"
     reference_scale: float = Field(default=1.25, gt=0)  # 模板来自 125% DPI 截图。
     match_threshold: float = Field(default=0.9, gt=0, le=1)
     sidebar_ratio: float = Field(default=0.1, gt=0, le=0.25)
-    window_title: str = Field(default="朋友圈", min_length=1)  # 跳转后的独立窗口标题。
+    menu_ratio: float = Field(default=0.4, gt=0, le=0.75)  # 发现菜单所在的左侧区域。
     timeout_seconds: float = Field(default=5.0, gt=0, le=60)

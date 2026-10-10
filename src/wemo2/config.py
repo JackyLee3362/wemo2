@@ -65,12 +65,15 @@ def _resolve_paths(values: dict, directory: Path) -> dict:
                 path = (directory / path).resolve()
             result[key] = path
     route = result.get("route")
-    if isinstance(route, dict) and isinstance(route.get("entry_template"), (str, Path)):
+    if isinstance(route, dict):
         route = dict(route)
-        path = Path(route["entry_template"])
-        if not path.is_absolute():
-            path = (directory / path).resolve()
-        route["entry_template"] = path
+        for key in ("entry_template", "selected_template", "menu_template"):
+            value = route.get(key)
+            if isinstance(value, (str, Path)):
+                path = Path(value)
+                if not path.is_absolute():
+                    path = (directory / path).resolve()
+                route[key] = path
         result["route"] = route
     return result
 

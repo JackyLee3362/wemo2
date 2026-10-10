@@ -26,7 +26,7 @@ class RoutingTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name)
-        self.config = RouteConfig(target="moments")
+        self.config = RouteConfig(target="discover")
         self.surface = Surface(
             platform=Platform.windows,
             surface_id="123",
@@ -107,47 +107,76 @@ class RoutingTests(unittest.TestCase):
 
     def make_router(self, already_open=False, found=True):
         driver = MagicMock()
-        driver.window.Name = self.config.window_title
-        driver.switch_to_window.side_effect = [already_open, True]
         driver.current_surface.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
         screenshotter = MagicMock()
         screenshotter.capture.return_value = self.frame
         locator = MagicMock()
-        if found:
-            locator.locate.return_value = LocatedTarget(
+
+        def locate(frame, name):
+            discover_visible = already_open or screenshotter.capture.call_count > 1
+            if name == "moments_entry" and (not found or discover_visible):
+                return None
+            if name != "moments_entry" and not discover_visible:
+                return None
+            return LocatedTarget(
                 frame_id="frame",
-                name="moments_entry",
+                name=name,
                 bounds=Rect(x=24, y=306, width=28, height=28),
                 score=1,
                 method="template",
             )
-        else:
-            locator.locate.return_value = None
+
+        locator.locate.side_effect = locate
         return WindowsPageRouter(driver, screenshotter, locator, self.config)
 
-    def test_route_clicks_once_and_verifies_target_window(self):
+    def test_route_clicks_once_and_verifies_page_screenshot(self):
         router = self.make_router()
-        self.assertEqual(router.ensure(Page.moments), self.frame)
+        self.assertEqual(router.ensure(Page.discover), self.frame)
         router.driver.click.assert_called_once()
         self.assertEqual(len(router.artifacts), 2)
 
     def test_already_open_route_does_not_click_again(self):
         router = self.make_router(already_open=True)
-        self.assertEqual(router.ensure(Page.moments), self.frame)
+        self.assertEqual(router.ensure(Page.discover), self.frame)
         router.driver.click.assert_not_called()
 
     def test_missing_icon_does_not_click(self):
         router = self.make_router(found=False)
         with self.assertRaisesRegex(RuntimeError, "未可靠识别"):
-            router.ensure(Page.moments)
+            router.ensure(Page.discover)
         router.driver.click.assert_not_called()
 
     def test_route_timeout_does_not_repeat_click(self):
         router = self.make_router()
-        router.driver.switch_to_window.side_effect = None
-        router.driver.switch_to_window.return_value = False
         with patch("wemo2_collector.routing.time.monotonic", side_effect=[0, 6]):
             with self.assertRaisesRegex(RuntimeError, "超时"):
-                router.ensure(Page.moments)
+                router.ensure(Page.discover)
         router.driver.click.assert_called_once()
+
+    def test_detect_requires_both_selected_icon_and_discovery_menu(self):
+        driver = MagicMock()
+        driver.current_surface.return_value = self.surface
+        locator = MomentsEntryLocator(self.config)
+        router = WindowsPageRouter(driver, MagicMock(), locator, self.config)
+        with (
+            Image.open(self.config.selected_template) as selected,
+            Image.open(self.config.menu_template) as menu,
+        ):
+            image = Image.new("RGB", (1100, 800), (40, 40, 40))
+            image.paste(selected, (24, 306))
+            image.save(self.frame.image_path)
+            self.assertEqual(router.detect(self.frame), Page.unknown)
+            image.paste(menu, (88, 52))
+            image.save(self.frame.image_path)
+            self.assertEqual(router.detect(self.frame), Page.discover)
+            self.assertNotEqual(router.detect(self.frame), Page.moments)
+            image.close()
+        self.make_image([(24, 306)])
+        self.assertEqual(router.detect(self.frame), Page.home)
+
+    def test_route_does_not_claim_feed_from_discovery_reference(self):
+        router = self.make_router()
+        with self.assertRaisesRegex(ValueError, "动态列表"):
+            router.ensure(Page.moments)
+        router.driver.click.assert_not_called()

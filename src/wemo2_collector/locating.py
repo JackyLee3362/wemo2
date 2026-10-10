@@ -11,7 +11,16 @@ class MomentsEntryLocator(BaseLocator):
         self.config = config
 
     def locate(self, frame: Screenshot, name: str) -> LocatedTarget | None:
-        if name != "moments_entry":
+        if name == "moments_entry":
+            template_path = self.config.entry_template
+            search_ratio = self.config.sidebar_ratio
+        elif name == "discover_selected":
+            template_path = self.config.selected_template
+            search_ratio = self.config.sidebar_ratio
+        elif name == "discover_menu":
+            template_path = self.config.menu_template
+            search_ratio = self.config.menu_ratio
+        else:
             raise ValueError(f"未定义的定位目标：{name}")
         # 只在识别入口时加载 OpenCV，不影响 help/version 或单纯截图。
         import cv2
@@ -19,9 +28,9 @@ class MomentsEntryLocator(BaseLocator):
 
         with Image.open(frame.image_path) as image:
             gray = np.array(image.convert("L"))
-        with Image.open(self.config.entry_template) as image:
+        with Image.open(template_path) as image:
             template = np.array(image.convert("L"))
-        sidebar_width = int(gray.shape[1] * self.config.sidebar_ratio)
+        sidebar_width = int(gray.shape[1] * search_ratio)
         sidebar = gray[:, :sidebar_width]
         candidates = []
         ratio = frame.surface.scale / self.config.reference_scale

@@ -1,7 +1,11 @@
 # wemo2_collector 界面采集架构
 
-状态：设计与接口骨架。当前没有注册真实 UI 采集器，也没有安装或运行 UIA、OpenCV、EasyOCR。
+状态：已实现 Windows 只读窗口连接与截图，注册名为 `windows_screenshot`。
+UIA 定位标题匹配且进程属于微信的唯一窗口，Pillow 通过 HWND 截图，保存 PNG 及 JSON 元数据。
+尚未实现页面路由、OpenCV 定位、EasyOCR 识别和朋友圈卡片解析。
 本轮先定义边界和数据流；Windows 首版实现随后按本设计接入，Android 只预留平台契约。
+截图阶段可通过 `wemo2.screenshot.toml` 运行，默认目录为 `data/screenshot`。
+采集器通过 `artifacts()` 交付保存路径，未识别动态时返回空 Observation 列表；协调器不生成伪造数据。
 目录采用 `wemo2_collector`，便于标准 Python import；当前与 `wemo2` 一起打包，不是独立发行包。
 
 ## 1. 技术依据与适用边界

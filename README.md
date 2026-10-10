@@ -25,6 +25,18 @@ uv run wemo2
 
 ## 最小采集流程
 
+Windows 微信窗口截图：
+
+```powershell
+uv run wemo2 --config wemo2.screenshot.toml
+```
+
+截图保存到 `data/screenshot`，文件名包含时间和 UUID，同时保存同名 JSON 元数据。
+先打开并还原微信窗口；默认按精确标题“微信”和微信进程定位，英文界面可修改 `window_title`。
+多实例时在配置中设置 `window_process_id`。截图通过窗口句柄获取，不执行激活、点击、滚动或发消息。
+全黑或尺寸异常会报错；不自动改截整个桌面。当前只保存截图，尚不读取朋友圈内容，动态数量为 0。
+目标程序拒绝窗口截图时需后续另行适配，不把失败当作成功。
+
 VS Code 调试入口为项目根目录的 `main.py`。先执行 `uv sync`，安装 VS Code 的
 Python 和 Python Debugger 扩展，再按 F5 选择“wemo2: 调试 CLI”。配置使用项目
 `.venv` 中的 Windows Python；可修改 `.vscode/launch.json` 的 `args` 传入命令行选项。

@@ -10,6 +10,7 @@ from wemo2.deduplicator import Deduplicator
 from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
 from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
 from wemo2.store import SQLiteStore
+from wemo2_collector.collector import WindowsScreenshotCollector
 
 
 class ComponentSpec(BaseModel):
@@ -17,6 +18,7 @@ class ComponentSpec(BaseModel):
 
     implementation: type
     parameters: dict[str, str] = Field(default_factory=dict)
+    optional_parameters: dict[str, str] = Field(default_factory=dict)
     defaults: dict[str, str] = Field(default_factory=dict)
     notice: str | None = None
 
@@ -36,6 +38,7 @@ class ComponentRegistry:
         implementation: type,
         *,
         parameters: dict[str, str] | None = None,
+        optional_parameters: dict[str, str] | None = None,
         defaults: dict[str, str] | None = None,
         default: bool = False,
         notice: str | None = None,
@@ -56,6 +59,7 @@ class ComponentRegistry:
         spec = ComponentSpec(
             implementation=implementation,
             parameters=parameters or {},
+            optional_parameters=optional_parameters or {},
             defaults=defaults or {},
             notice=notice,
         )
@@ -90,6 +94,9 @@ class ComponentRegistry:
         arguments = {}
         for parameter, field in spec.parameters.items():
             arguments[parameter] = settings[field]
+        for parameter, field in spec.optional_parameters.items():
+            if field in settings:
+                arguments[parameter] = settings[field]
         return spec.implementation(**arguments)
 
 
@@ -109,6 +116,16 @@ collectors.register(
     defaults={"deduplicator": "stable", "store": "sqlite"},
 )
 deduplicators.register("pseudo", PseudoDeduplicator, default=True)
+collectors.register(
+    "windows_screenshot",
+    WindowsScreenshotCollector,
+    parameters={
+        "platform": "platform",
+        "screenshot_dir": "screenshot_dir",
+        "window_title": "window_title",
+    },
+    optional_parameters={"window_process_id": "window_process_id"},
+)
 deduplicators.register("stable", Deduplicator)
 stores.register(
     "pseudo",

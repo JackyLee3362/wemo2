@@ -3,11 +3,16 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
+from pathlib import Path
 
 from wemo2.models import Action, Decision, Observation, Post, SavedObservation
 
 
 class BaseCollector(ABC):
+    def artifacts(self) -> list[Path]:
+        """本次采集保存的文件；截图阶段可没有动态记录。"""
+        return []
+
     @abstractmethod
     def collect(self) -> Iterable[Observation]:
         """读取数据源，产生统一的采集记录。"""

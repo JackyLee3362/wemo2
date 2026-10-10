@@ -1,5 +1,6 @@
 """组件间的 Pydantic 数据契约；JSON 用于导入和持久化。"""
 
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -193,3 +194,4 @@ class RunResult(BaseModel):
     unchanged: int = Field(default=0, ge=0)
     duplicates: int = Field(default=0, ge=0)  # 本次累计重复次数，不等同于 unchanged。
     stop_reason: Literal["completed", "duplicate_limit"] = "completed"
+    artifacts: list[Path] = Field(default_factory=list)  # 本次采集保存的证据文件。

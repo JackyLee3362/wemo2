@@ -51,6 +51,7 @@ class Coordinator:
                     records.close()
             finally:
                 self.collector.stop()
+        result.artifacts = self.collector.artifacts()
         logger.info(
             "采集完成：读取 {}，新增 {}，更新 {}，未变更 {}",
             result.collected,

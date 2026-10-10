@@ -12,6 +12,10 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 ## 1. 模块边界
 
+Windows 截图阶段已经实现，注册名 `windows_screenshot`，通过 `wemo2.screenshot.toml` 运行。
+截图与 JSON 元数据保存到 `data/screenshot`。此阶段不解析朋友圈，动态数量为 0；
+`BaseCollector.artifacts()` 与 `RunResult.artifacts` 交付实际保存的证据路径。
+
 界面采集器内部设计见 [wemo2_collector 架构](src/wemo2_collector/ARCHITECTURE.md)。
 新包定义平台驱动、页面路由器、截图器、定位器、文字识别器和动态读取器的抽象接口。
 配置中的 `platform` 表示目标采集源平台，取 `windows` 或 `android`，默认 Windows，

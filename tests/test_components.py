@@ -30,6 +30,7 @@ class ComponentTests(unittest.TestCase):
                 "unchanged": 1,
                 "duplicates": 1,
                 "stop_reason": "completed",
+                "artifacts": [],
             },
         )
         self.assertEqual(len(coordinator.store.list_posts()), 2)

@@ -17,6 +17,9 @@ def build_coordinator(
     database: str | Path = "data/wemo2.sqlite3",
     stop_policy: StopPolicy | None = None,
     platform: Platform = Platform.windows,
+    screenshot_dir: str | Path = "data/screenshot",
+    window_title: str = "微信",
+    window_process_id: int | None = None,
 ) -> Coordinator:
     if collector is None:
         collector = collectors.default_name()
@@ -28,6 +31,9 @@ def build_coordinator(
         "json_path": json_path,
         "database": database,
         "platform": Platform(platform),
+        "screenshot_dir": screenshot_dir,
+        "window_title": window_title,
+        "window_process_id": window_process_id,
     }
     # 在创建任何实例前校验组合，避免无效配置提前打开存储资源。
     collectors.validate(collector, settings)

@@ -28,6 +28,15 @@ class AppConfig(StopPolicy):
         default_factory=stores.default_name, description="存储器注册名称"
     )
     json_path: Path | None = Field(default=None, description="JSON 采集器的输入文件")
+    screenshot_dir: Path = Field(
+        default=Path("data/screenshot"), description="窗口截图保存目录"
+    )
+    window_title: str = Field(
+        default="微信", min_length=1, description="微信窗口的精确标题"
+    )
+    window_process_id: int | None = Field(
+        default=None, gt=0, description="多实例时指定微信进程"
+    )
     database: Path = Field(
         default=Path("data/wemo2.sqlite3"), description="SQLite 数据库文件"
     )
@@ -47,7 +56,7 @@ class AppConfig(StopPolicy):
 
 def _resolve_paths(values: dict, directory: Path) -> dict:
     result = dict(values)
-    for key in ("database", "json_path", "log_file"):
+    for key in ("database", "json_path", "log_file", "screenshot_dir"):
         value = result.get(key)
         if isinstance(value, (str, Path)):
             path = Path(value)

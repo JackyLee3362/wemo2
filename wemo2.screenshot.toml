@@ -1,0 +1,7 @@
+# 截取当前微信窗口，只保存图片，不执行导航、OCR 或朋友圈内容识别。
+collector = "windows_screenshot"
+platform = "windows"
+window_title = "微信"
+screenshot_dir = "data/screenshot"
+log_file = "logs/wemo2.log"
+log_level = "INFO"

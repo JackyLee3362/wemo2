@@ -38,7 +38,10 @@ class WindowsScreenshotCollector(BaseCollector):
                 router = WindowsPageRouter(
                     self.driver, self.screenshotter, locator, self.route
                 )
-                router.ensure(Page(self.route.target))
+                if self.route.target == "moments_entry":
+                    router.open_moments_entry()
+                else:
+                    router.ensure(Page(self.route.target))
                 self._artifacts = list(router.artifacts)
                 return []
             surface = self.driver.prepare_capture()

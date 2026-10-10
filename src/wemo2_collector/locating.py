@@ -20,6 +20,9 @@ class MomentsEntryLocator(BaseLocator):
         elif name == "discover_menu":
             template_path = self.config.menu_template
             search_ratio = self.config.menu_ratio
+        elif name == "moments_menu":
+            template_path = self.config.moments_menu_template
+            search_ratio = self.config.menu_ratio
         else:
             raise ValueError(f"未定义的定位目标：{name}")
         # 只在识别入口时加载 OpenCV，不影响 help/version 或单纯截图。

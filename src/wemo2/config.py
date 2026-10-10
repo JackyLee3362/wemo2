@@ -67,7 +67,12 @@ def _resolve_paths(values: dict, directory: Path) -> dict:
     route = result.get("route")
     if isinstance(route, dict):
         route = dict(route)
-        for key in ("entry_template", "selected_template", "menu_template"):
+        for key in (
+            "entry_template",
+            "selected_template",
+            "menu_template",
+            "moments_menu_template",
+        ):
             value = route.get(key)
             if isinstance(value, (str, Path)):
                 path = Path(value)

@@ -69,5 +69,25 @@ class WindowsPageRouter(BasePageRouter):
             time.sleep(0.2)
         raise RuntimeError("点击后未识别到选中的指南针与发现菜单，路由超时")
 
+    def open_moments_entry(self) -> Screenshot:
+        """验证发现页后点击朋友圈菜单一次，保存待验证的结果截图。"""
+        frame = self.ensure(Page.discover)
+        target = self.locator.locate(frame, "moments_menu")
+        if target is None:
+            raise RuntimeError("朋友圈菜单未可靠识别或匹配不唯一，未执行点击")
+        logger.info(
+            "朋友圈菜单匹配成功，分数 {:.3f}，位置 {}", target.score, target.bounds
+        )
+        self.driver.click(frame, target)
+        time.sleep(0.5)
+        # 某些微信版本会打开独立窗口；只能跟随同进程的前台窗口。
+        self.driver.follow_foreground()
+        result = self._capture()
+        logger.warning(
+            "已执行朋友圈菜单点击并保存截图，动态列表页面仍待验证：{}",
+            result.image_path,
+        )
+        return result
+
     def advance(self) -> Screenshot | None:
         raise NotImplementedError("当前只实现朋友圈入口路由，尚未实现滚动采集")

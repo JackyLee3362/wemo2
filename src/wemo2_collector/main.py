@@ -40,6 +40,10 @@ def main(config_path: Path | None = None) -> None:
     )
     try:
         paths = run_collector(config)
+        if config.route.target == "moments_entry":
+            console.print(
+                Text("已执行朋友圈菜单点击；请查看截图，动态列表尚未自动验证。")
+            )
         for path in paths:
             console.print(Text(f"截图已保存：{path}"))
         console.print(Text(f"日志文件：{config.log_file}"))

@@ -205,3 +205,15 @@ OpenCV contrib <= 4.6.0.66，因此移除独立的 opencv-python-headless，避�
 Airtest 及平台模块延迟加载；其标准 logging 日志转入 Loguru，使用应用已有文件 sink。
 原有 windows_screenshot 注册名、TOML 配置和 VS Code 调试入口保持可用。
 Android 仍未实现，选择该平台明确报错。
+
+## 10. 朋友圈菜单点击调试
+
+`wemo2.moments.toml` 的 `[route] target = "moments_entry"` 表示导航动作，
+不是已经识别的 `Page.moments` 状态。流程为验证发现页、匹配 `moments_menu`、
+点击一次、短暂等待、跟随原微信进程的前台窗口并保存待验证截图。
+`target = "discover"` 仍只打开发现菜单，`none` 仍只截图。
+
+`assets/moments_menu.png` 从未标注的原始发现页截图裁取图标与文字，
+不包含橙色标记；通过 `moments_menu_template` 可替换模板，文件路径相对配置目录。
+匹配低于阈值或不唯一时拒绝点击。若点击后前台属于其他进程，停止并报错，不切回旧窗口。
+页面验证仍需补充真实朋友圈列表样本，当前不会把点击无异常或发现菜单当作列表验证成功。

@@ -367,3 +367,48 @@ class WindowsScreenshotTests(unittest.TestCase):
         device.screen.close.assert_called_once()
         device.stop_app.assert_not_called()
         user32.SetThreadDpiAwarenessContext.assert_any_call(1)
+
+    def test_follow_foreground_connects_same_process_window_and_releases_old_device(
+        self,
+    ):
+        driver = WindowsDriver()
+        old_device = MagicMock()
+        old_device.handle = 123
+        new_device = MagicMock()
+        driver.device = old_device
+        driver.user32 = MagicMock()
+        driver.user32.GetForegroundWindow.return_value = 456
+
+        def read_pid(handle, pointer):
+            pointer._obj.value = 42
+            return 1
+
+        driver.user32.GetWindowThreadProcessId.side_effect = read_pid
+        with (
+            patch(
+                "wemo2_collector.windows.backend.create_device", return_value=new_device
+            ) as create,
+            patch.object(driver, "current_surface", return_value=self.surface),
+        ):
+            driver.follow_foreground()
+        create.assert_called_once_with(handle=456, foreground=False)
+        old_device.screen.close.assert_called_once()
+        self.assertIs(driver.device, new_device)
+
+    def test_follow_foreground_rejects_other_process_without_connecting(self):
+        driver = WindowsDriver()
+        driver.device = MagicMock()
+        driver.device.handle = 123
+        driver.user32 = MagicMock()
+        driver.user32.GetForegroundWindow.return_value = 456
+
+        def read_pid(handle, pointer):
+            pointer._obj.value = handle
+            return 1
+
+        driver.user32.GetWindowThreadProcessId.side_effect = read_pid
+        with patch("wemo2_collector.windows.backend.create_device") as create:
+            with self.assertRaisesRegex(RuntimeError, "不属于原微信进程"):
+                driver.follow_foreground()
+        create.assert_not_called()
+        driver.device.screen.close.assert_not_called()

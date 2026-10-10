@@ -230,6 +230,7 @@ uv run python -m wemo2_collector.moments_main
 ```
 
 截图保存在 `data/screenshot`，包括客户区 PNG 和 JSON 元数据。窗口需要可见且无遮挡。
-当前入口路由验证的是发现菜单，尚未读取朋友圈动态。原有 TOML 配置无需修改。
+朋友圈调试入口会先验证发现菜单，再定位并点击“朋友圈”一行，保存点击后的截图。
+若打开同进程独立窗口，会跟随该窗口截图。动态列表尚未自动验证或读取。
 Airtest 当前依赖 NumPy 1.x 与 OpenCV contrib 4.6，不再同时安装 opencv-python-headless。
 模板定位继续通过独立 Locator 实现，皮肤兼容仍需维护模板；Android 适配留待后续实现。

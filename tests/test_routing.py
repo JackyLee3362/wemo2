@@ -181,3 +181,55 @@ class RoutingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "动态列表"):
             router.ensure(Page.moments)
         router.driver.click.assert_not_called()
+
+    def test_moments_menu_locator_finds_row_and_rejects_multiple_rows(self):
+        locator = MomentsEntryLocator(self.config)
+        with Image.open(self.config.moments_menu_template) as template:
+            image = Image.new("RGB", (1100, 800), (40, 40, 40))
+            image.paste(template, (94, 116))
+            image.save(self.frame.image_path)
+            target = locator.locate(self.frame, "moments_menu")
+            self.assertIsNotNone(target)
+            self.assertEqual(target.bounds, Rect(x=94, y=116, width=93, height=29))
+            image.paste(template, (94, 400))
+            image.save(self.frame.image_path)
+            self.assertIsNone(locator.locate(self.frame, "moments_menu"))
+            image.close()
+
+    def test_menu_action_clicks_once_then_saves_unverified_result(self):
+        router = self.make_router(already_open=True)
+        with patch("wemo2_collector.routing.time.sleep"):
+            self.assertEqual(router.open_moments_entry(), self.frame)
+        router.driver.click.assert_called_once()
+        clicked = router.driver.click.call_args.args[1]
+        self.assertEqual(clicked.name, "moments_menu")
+        router.driver.follow_foreground.assert_called_once()
+        self.assertEqual(len(router.artifacts), 2)
+        # 当前 discover 截图不能被当作朋友圈动态列表。
+        self.assertEqual(router.detect(self.frame), Page.discover)
+
+    def test_missing_menu_action_does_not_click(self):
+        router = self.make_router(already_open=True)
+        original_locate = router.locator.locate.side_effect
+
+        def locate(frame, name):
+            if name == "moments_menu":
+                return None
+            return original_locate(frame, name)
+
+        router.locator.locate.side_effect = locate
+        with self.assertRaisesRegex(RuntimeError, "朋友圈菜单未可靠识别"):
+            router.open_moments_entry()
+        router.driver.click.assert_not_called()
+
+    def test_action_follows_both_navigation_steps_without_repeating_clicks(self):
+        router = self.make_router()
+        with patch("wemo2_collector.routing.time.sleep"):
+            router.open_moments_entry()
+        self.assertEqual(router.driver.click.call_count, 2)
+        self.assertEqual(
+            router.driver.click.call_args_list[0].args[1].name, "moments_entry"
+        )
+        self.assertEqual(
+            router.driver.click.call_args_list[1].args[1].name, "moments_menu"
+        )

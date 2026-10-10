@@ -65,7 +65,7 @@ class LocatedTarget(BaseModel):
     name: str
     bounds: Rect
     score: float = Field(ge=0, le=1)
-    method: str  # uia、template、ocr 等方法名。
+    method: str  # template、ocr 等方法名。
 
 
 class TextBlock(BaseModel):
@@ -79,13 +79,14 @@ class TextBlock(BaseModel):
 
 
 class RouteConfig(BaseModel):
-    """页面路由配置；none 只截图，discover 打开并验证发现菜单。"""
+    """none 只截图；discover 验证发现菜单；moments_entry 点击菜单入口。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    target: str = Field(default="none", pattern=r"^(none|discover)$")
+    target: str = Field(default="none", pattern=r"^(none|discover|moments_entry)$")
     entry_template: Path = Path(__file__).parent / "assets/moments_entry.png"
     selected_template: Path = Path(__file__).parent / "assets/discover_selected.png"
     menu_template: Path = Path(__file__).parent / "assets/discover_menu.png"
+    moments_menu_template: Path = Path(__file__).parent / "assets/moments_menu.png"
     reference_scale: float = Field(default=1.25, gt=0)  # 模板来自 125% DPI 截图。
     match_threshold: float = Field(default=0.9, gt=0, le=1)
     sidebar_ratio: float = Field(default=0.1, gt=0, le=0.25)

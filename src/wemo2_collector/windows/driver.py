@@ -48,6 +48,10 @@ class WindowsDriver(BaseDriver):
         ]
         self.user32.GetDpiForWindow.argtypes = [wintypes.HWND]
         self.user32.GetForegroundWindow.restype = wintypes.HWND
+        self.user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
         self.user32.GetSystemMetrics.argtypes = [ctypes.c_int]
         matches = []
         windows = findwindows.find_elements(
@@ -157,6 +161,38 @@ class WindowsDriver(BaseDriver):
         # DPI 感知已设为物理像素，Airtest dpifactor 保持 1，避免重复缩放。
         left, top = self.device.get_pos()
         self.device.touch((x - left, y - top), duration=0.1)
+
+    def follow_foreground(self) -> None:
+        """跟随点击后同进程的前台窗口，不切回旧窗口或连接其他应用。"""
+        if self.device is None:
+            raise RuntimeError("微信窗口尚未连接")
+        handle = self.user32.GetForegroundWindow()
+        if handle == self.device.handle:
+            return
+        original_pid = wintypes.DWORD()
+        foreground_pid = wintypes.DWORD()
+        if not self.user32.GetWindowThreadProcessId(
+            self.device.handle, ctypes.byref(original_pid)
+        ):
+            raise RuntimeError("无法读取原微信窗口进程")
+        if not self.user32.GetWindowThreadProcessId(
+            handle, ctypes.byref(foreground_pid)
+        ):
+            raise RuntimeError("无法读取点击后的前台进程")
+        if original_pid.value != foreground_pid.value:
+            raise RuntimeError("点击后前台窗口不属于原微信进程，请检查微信界面")
+        from wemo2_collector.windows.backend import create_device
+
+        new_device = create_device(handle=handle, foreground=False)
+        old_device = self.device
+        self.device = new_device
+        try:
+            self.current_surface()
+        except Exception:
+            new_device.screen.close()
+            self.device = old_device
+            raise
+        old_device.screen.close()
 
     def scroll(self, surface: Surface, distance: int) -> None:
         raise NotImplementedError("当前阶段只支持截图，不执行滚动")

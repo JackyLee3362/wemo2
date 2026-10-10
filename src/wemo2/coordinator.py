@@ -1,29 +1,13 @@
 """协调器：采集 → 去重 → 原子保存。"""
 
-from dataclasses import dataclass
-from typing import Protocol
-
 from loguru import logger
 
-from wemo2.collector import Collector, Observation
-from wemo2.deduplicator import Decision, DedupIndex, Deduplicator
-
-
-class Store(DedupIndex, Protocol):
-    def transaction(self): ...
-    def save(self, observation: Observation, decision: Decision) -> str: ...
-
-
-@dataclass
-class RunResult:
-    collected: int = 0
-    created: int = 0
-    merged: int = 0
-    unchanged: int = 0
+from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
+from wemo2.models import RunResult
 
 
 class Coordinator:
-    def __init__(self, collector: Collector, deduplicator: Deduplicator, store: Store):
+    def __init__(self, collector: BaseCollector, deduplicator: BaseDeduplicator, store: BaseStore):
         self.collector = collector
         self.deduplicator = deduplicator
         self.store = store

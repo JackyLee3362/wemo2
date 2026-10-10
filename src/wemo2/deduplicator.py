@@ -1,13 +1,16 @@
 """保守去重：Observation 幂等与稳定源身份，不按正文误合并。"""
 
 import json
-from dataclasses import dataclass
-from typing import Protocol
 
-from wemo2.collector import Observation
+from pydantic import BaseModel
+
+from wemo2.interfaces import BaseDeduplicator, BaseStore
+from wemo2.models import Decision, Observation
 
 
 def canonical_json(value: object) -> str:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json", exclude_unset=True)
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -17,40 +20,29 @@ def canonical_json(value: object) -> str:
     )
 
 
-class DedupIndex(Protocol):
-    def get_observation(self, scope: str, observation_id: str) -> dict | None: ...
-    def find_post(self, scope: str, identity_key: str) -> dict | None: ...
-
-
-@dataclass(frozen=True)
-class Decision:
-    action: str
-    post_id: str | None = None
-    identity_key: str | None = None
-
-
-class Deduplicator:
-    def resolve(self, observation: Observation, index: DedupIndex) -> Decision:
-        scope = observation["account_scope"]
-        previous = index.get_observation(scope, observation["observation_id"])
+class Deduplicator(BaseDeduplicator):
+    def resolve(self, observation: Observation, index: BaseStore) -> Decision:
+        scope = observation.account_scope
+        previous = index.get_observation(scope, observation.observation_id)
         if previous is not None:
-            if previous["payload"] != canonical_json(observation):
+            # 兼容旧数据库中的时间字符串格式。
+            if canonical_json(Observation.model_validate_json(previous.payload)) != canonical_json(observation):
                 raise ValueError(
                     "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
                 )
-            return Decision("unchanged", previous["post_id"])
+            return Decision(action="unchanged", post_id=previous.post_id)
 
-        source = observation["source"]
+        source = observation.source
         identity = None
-        if source.get("native_post_id_stable") is True:
+        if source.native_post_id_stable:
             identity = canonical_json(
                 [
-                    source["platform"],
-                    source["native_id_namespace"],
-                    source["native_post_id"],
+                    source.platform,
+                    source.native_id_namespace,
+                    source.native_post_id,
                 ]
             )
         existing = index.find_post(scope, identity) if identity is not None else None
         if existing is None:
-            return Decision("created", identity_key=identity)
-        return Decision("merged", existing["post_id"], identity)
+            return Decision(action="created", identity_key=identity)
+        return Decision(action="merged", post_id=existing.post_id, identity_key=identity)

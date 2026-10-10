@@ -12,6 +12,15 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 ## 1. 模块边界
 
+当前 Python 代码使用 `interfaces.py` 的 `BaseCollector`、`BaseDeduplicator`、`BaseStore`
+三个 ABC 抽象类。`Coordinator` 只依赖这些契约，通过构造函数注入具体实现；
+`composition.build_coordinator()` 是选择并组装实现的入口，协调器本身不做模拟。
+
+流程演示提供 `PseudoCollector`（内置模型记录）、`PseudoDeduplicator`（Observation ID 幂等）、
+`PseudoStore`（内存保存、修订和失败回滚）。采集器默认产生两条动态与一次重复投递，
+同一个协调器可替换为 JSON 采集、稳定源 ID 去重或 SQLite 存储，也支持混合组合。
+模拟存储是单线程演示工具，不提供跨进程持久化和并发保证。
+
 ```mermaid
 flowchart LR
     Runner[任务编排器] --> Collector[采集适配器]
@@ -35,6 +44,14 @@ flowchart LR
 模块可运行在同一进程，也可通过 HTTP、消息队列或标准输入输出连接。本文的操作名是逻辑接口，不规定网络协议。
 
 ## 2. 通用数据约定
+
+Python 实现以 `src/wemo2/models.py` 中的 Pydantic 模型为数据定义，JSON 是它们的外部序列化形式。
+已定义 Observation、Source、Content、Author、Media、Comment、Reaction、Post、Decision 和 RunResult 等结构。
+时间字段使用带时区的 datetime，导入时校验必填项、字段状态、媒体结构及稳定源 ID 的关联约束。
+序列化使用 `exclude_unset=True` 保留字段缺失语义，旧数据库的 Observation 通过模型解析后比较，兼容时间字符串格式变化。
+
+当前 `JsonCollector(path)` 接收文件路径，文件中的数组代表一批 Observation，用于导入已有或模拟记录。
+抽象采集接口 `collect() -> Iterable[Observation]` 的输出不依赖文件格式；未来 Windows/Android 采集器可直接逐条产生模型对象。
 
 - JSON 字段使用 `snake_case`；所有消息携带 `schema_version`。
 - ID 均为字符串；内部 ID 使用 UUID 或同等唯一标识，不依赖某种数据库自增值。

@@ -7,11 +7,12 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
-from wemo2.collector import Observation
-from wemo2.deduplicator import Decision, canonical_json
+from wemo2.deduplicator import canonical_json
+from wemo2.interfaces import BaseStore
+from wemo2.models import Action, Content, Decision, Observation, Post, SavedObservation
 
 
-class SQLiteStore:
+class SQLiteStore(BaseStore):
     def __init__(self, path: str | Path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -36,10 +37,7 @@ class SQLiteStore:
             );
         """)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_):
+    def close(self) -> None:
         self.connection.close()
 
     @contextmanager
@@ -53,26 +51,29 @@ class SQLiteStore:
             self.connection.rollback()
             raise
 
-    def get_observation(self, scope: str, observation_id: str) -> dict | None:
+    def get_observation(
+        self, scope: str, observation_id: str
+    ) -> SavedObservation | None:
         row = self.connection.execute(
             "SELECT * FROM observations WHERE account_scope=? AND observation_id=?",
             (scope, observation_id),
         ).fetchone()
-        return dict(row) if row else None
+        return SavedObservation.model_validate(dict(row)) if row else None
 
-    def find_post(self, scope: str, identity_key: str) -> dict | None:
+    def find_post(self, scope: str, identity_key: str) -> Post | None:
         row = self.connection.execute(
             "SELECT * FROM posts WHERE account_scope=? AND identity_key=?",
             (scope, identity_key),
         ).fetchone()
-        return dict(row) if row else None
+        return self._post_from_row(row) if row else None
 
-    def save(self, observation: Observation, decision: Decision) -> str:
+    def save(self, observation: Observation, decision: Decision) -> Action:
         if decision.action == "unchanged":
             return "unchanged"
-        scope = observation["account_scope"]
+        scope = observation.account_scope
         post_id = decision.post_id or str(uuid4())
-        incoming = observation["content"]
+        incoming = observation.content.model_dump(mode="json", exclude_unset=True)
+        observed_at = observation.observed_at.isoformat()
         existing = self.connection.execute(
             "SELECT * FROM posts WHERE post_id=?", (post_id,)
         ).fetchone()
@@ -88,20 +89,20 @@ class SQLiteStore:
                     decision.identity_key,
                     content,
                     revision,
-                    observation["observed_at"],
-                    observation["observed_at"],
+                    observed_at,
+                    observed_at,
                 ),
             )
         else:
             merged = json.loads(existing["content"])
-            statuses = observation.get("field_status", {})
+            statuses = observation.field_status
             # 最小实现按顶层字段更新；部分值只补缺，完整值才允许替换。
             for key, value in incoming.items():
                 status = statuses.get(key, "partial")
                 if value is not None and status != "unknown":
                     if statuses.get(key) == "complete" or merged.get(key) is None:
                         merged[key] = value
-            content = canonical_json(merged)
+            content = canonical_json(Content.model_validate(merged))
             changed = content != existing["content"]
             action = "merged" if changed else "unchanged"
             revision = existing["revision"] + int(changed)
@@ -111,7 +112,7 @@ class SQLiteStore:
                     content,
                     revision,
                     max(
-                        (existing["last_seen_at"], observation["observed_at"]),
+                        (existing["last_seen_at"], observed_at),
                         key=datetime.fromisoformat,
                     ),
                     post_id,
@@ -120,22 +121,26 @@ class SQLiteStore:
         if action != "unchanged":
             self.connection.execute(
                 "INSERT INTO revisions VALUES (?, ?, ?, ?)",
-                (post_id, revision, content, observation["observation_id"]),
+                (post_id, revision, content, observation.observation_id),
             )
         self.connection.execute(
             "INSERT INTO observations VALUES (?, ?, ?, ?)",
             (
                 scope,
-                observation["observation_id"],
+                observation.observation_id,
                 post_id,
                 canonical_json(observation),
             ),
         )
         return action
 
-    def list_posts(self) -> list[dict]:
+    @staticmethod
+    def _post_from_row(row: sqlite3.Row) -> Post:
+        return Post.model_validate(dict(row) | {"content": json.loads(row["content"])})
+
+    def list_posts(self) -> list[Post]:
         return [
-            dict(row) | {"content": json.loads(row["content"])}
+            self._post_from_row(row)
             for row in self.connection.execute(
                 "SELECT * FROM posts ORDER BY first_seen_at, post_id"
             )

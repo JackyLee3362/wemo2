@@ -7,6 +7,7 @@ from unittest.mock import patch
 from pydantic import ValidationError
 
 from wemo2.app import run_config
+from wemo2.collector_config import load_pseudo_options
 from wemo2.composition import build_coordinator
 from wemo2.config import load_config
 from wemo2.pseudo import PseudoCollector
@@ -28,11 +29,12 @@ class CollectorPlatformTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
         ):
             collectors.register(
-                "platform-test", Collector, parameters={"platform": "platform"}
+                "platform-test", Collector, prepare_options=load_pseudo_options
             )
             cwd = Path(directory)
             (cwd / "wemo2.toml").write_text(
-                'collector = "platform-test"\nplatform = "android"\n', encoding="utf-8"
+                'collector = "platform-test"\n[collector_options]\nplatform = "android"\n',
+                encoding="utf-8",
             )
             config = load_config(cwd=cwd)
             self.assertEqual(run_config(config).created, 2)
@@ -41,16 +43,23 @@ class CollectorPlatformTests(unittest.TestCase):
     def test_default_platform_and_unknown_platform_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             config = load_config(cwd=Path(directory))
-            self.assertEqual(config.platform, Platform.windows)
+            self.assertEqual(
+                build_coordinator(
+                    collector_options=config.collector_options
+                ).collector.platform,
+                Platform.windows,
+            )
             for value in ("andriod", "linux"):
                 with self.subTest(platform=value), self.assertRaises(ValidationError):
-                    load_config({"platform": value}, cwd=Path(directory))
+                    load_config(
+                        {"collector_options": {"platform": value}}, cwd=Path(directory)
+                    )
 
     def test_json_platform_parameter_preserves_record_source(self):
         path = Path(__file__).parents[1] / "examples/observations.json"
         original = json.loads(path.read_text(encoding="utf-8"))[0]
         coordinator = build_coordinator(
-            "json", json_path=path, platform=Platform.android
+            "json", collector_options={"path": path, "platform": "android"}
         )
         with coordinator.store:
             self.assertEqual(coordinator.collector.platform, Platform.android)

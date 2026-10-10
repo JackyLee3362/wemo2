@@ -165,12 +165,14 @@ class WindowsScreenshotTests(unittest.TestCase):
 
     def test_screenshot_collector_rejects_android(self):
         with self.assertRaisesRegex(ValueError, "Android"):
-            build_coordinator("windows_screenshot", platform=Platform.android)
+            build_coordinator(
+                "windows_screenshot", collector_options={"platform": "android"}
+            )
 
     def test_cli_saves_screenshot_without_fake_observations(self):
         config = self.path / "config.toml"
         config.write_text(
-            'collector = "windows_screenshot"\nscreenshot_dir = "captures"\nwindow_process_id = 42\n',
+            'collector = "windows_screenshot"\n[collector_options]\nscreenshot_dir = "captures"\nwindow_process_id = 42\n',
             encoding="utf-8",
         )
         with (
@@ -191,18 +193,23 @@ class WindowsScreenshotTests(unittest.TestCase):
         ):
             result = CliRunner().invoke(cli, ["--config", str(config)])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("截图已保存", result.stdout)
+        self.assertIn("采集文件已保存", result.stdout)
         self.assertEqual(len(list((self.path / "captures").glob("*.png"))), 1)
-        coordinator = build_coordinator("windows_screenshot", window_process_id=42)
+        coordinator = build_coordinator(
+            "windows_screenshot", collector_options={"window_process_id": 42}
+        )
         self.assertEqual(coordinator.collector.driver.process_id, 42)
         coordinator.store.close()
 
     def test_capture_failure_releases_driver(self):
-        coordinator = build_coordinator("windows_screenshot", screenshot_dir=self.path)
+        coordinator = build_coordinator(
+            "windows_screenshot", collector_options={"screenshot_dir": self.path}
+        )
         driver = MagicMock()
         driver.attach.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
         coordinator.collector.driver = driver
+        coordinator.collector.interaction.driver = driver
         with patch(
             "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
             side_effect=OSError("capture failed"),

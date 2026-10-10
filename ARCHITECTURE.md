@@ -18,8 +18,9 @@ Windows 截图阶段已经实现，注册名 `windows_screenshot`，通过 `wemo
 
 界面采集器内部设计见 [wemo2_collector 架构](src/wemo2_collector/ARCHITECTURE.md)。
 新包定义平台驱动、页面路由器、截图器、定位器、文字识别器和动态读取器的抽象接口。
-配置中的 `platform` 表示目标采集源平台，取 `windows` 或 `android`，默认 Windows，
-通过注册表传入 Collector；当前实际采集仍为 pseudo/JSON，真实 UI 采集器尚未接入。
+页面、主题、模板、窗口和截图配置由 `wemo2_collector` 独立维护。
+应用层只传递 `collector_options` 字典与配置目录，通过注册的 `prepare_options` 委托
+实现方校验与解析；数据源平台也属于专属配置。Windows 已实现截图及导航，Android 尚未实现。
 
 应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
 `AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
@@ -40,7 +41,8 @@ CLI 使用 Rich 展示统计表格和简短错误提示；Loguru 默认写入 `l
 注册信息包含实现类、构造参数到配置字段的映射、可选默认搭配和展示提示。
 Pydantic 配置模型按注册表校验组件名称与所需参数，
 组装入口通过注册表创建实例。新增采用已有配置字段的实现只需导入和注册，
-无需增加枚举或组装分支；全新配置字段仍需在配置模型中声明。
+无需增加枚举或组装分支。新采集器的专属字段在其自己的配置模型中声明，
+无需修改应用配置。除了唯一注册入口外，核心模块不导入界面采集模型或实现。
 
 流程演示提供 `PseudoCollector`（内置模型记录）、`PseudoDeduplicator`（Observation ID 幂等）、
 `PseudoStore`（内存保存、修订和失败回滚）。采集器默认产生两条动态与一次重复投递，

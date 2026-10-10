@@ -5,7 +5,6 @@ from pathlib import Path
 from wemo2.coordinator import Coordinator
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
-from wemo2_collector.models import Platform, RouteConfig
 
 
 def build_coordinator(
@@ -13,14 +12,10 @@ def build_coordinator(
     deduplicator: str | None = None,
     store: str | None = None,
     *,
-    json_path: str | Path | None = None,
+    collector_options: dict | None = None,
+    config_directory: str | Path | None = None,
     database: str | Path = "data/wemo2.sqlite3",
     stop_policy: StopPolicy | None = None,
-    platform: Platform = Platform.windows,
-    screenshot_dir: str | Path = "data/screenshot",
-    window_title: str = "微信",
-    window_process_id: int | None = None,
-    route: RouteConfig | None = None,
 ) -> Coordinator:
     if collector is None:
         collector = collectors.default_name()
@@ -29,13 +24,9 @@ def build_coordinator(
     if store is None:
         store = stores.default_name()
     settings = {
-        "json_path": json_path,
+        "collector_options": collector_options or {},
+        "config_directory": Path(config_directory or Path.cwd()),
         "database": database,
-        "platform": Platform(platform),
-        "screenshot_dir": screenshot_dir,
-        "window_title": window_title,
-        "window_process_id": window_process_id,
-        "route": route,
     }
     # 在创建任何实例前校验组合，避免无效配置提前打开存储资源。
     collectors.validate(collector, settings)

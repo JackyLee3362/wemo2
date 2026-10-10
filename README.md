@@ -3,7 +3,7 @@
 朋友圈备份工具，使用 Python 实现自动采集、去重与持久化。
 
 - 支持平台：Windows
-- 采集源配置：`platform = "windows"`，预留 `android`；当前真实界面采集尚未实现。
+- 采集源配置位于 `[collector_options]`；已实现 Windows 截图与导航，Android 尚未实现。
 - 首版交互：CLI；Tkinter 界面留待后续实现。
 - 日志：Loguru
 - 命令行：Typer
@@ -31,15 +31,15 @@ uv run wemo2
 uv run wemo2 --config wemo2.moments.toml
 ```
 
-VS Code 可选择“wemo2_collector: 调试朋友圈路由”按 F5。路由器截取当前页面，
-在左侧栏匹配指南针图标，按匹配中心点击，再通过“选中的绿色指南针 + 发现菜单特征”
-共同验证主窗口已进入发现页面。已经显示该页面时不重复点击。匹配不唯一或跳转超时会报错。
+VS Code 可选择“wemo2_collector: 调试朋友圈路由”按 F5。
+默认先验证发现菜单，再定位并点击“朋友圈”一行，保存点击后的待验证截图。
+已在发现页时不重复点击指南针；匹配不唯一或跳转超时会报错。
 
-`[route]` 配置控制目标、入口/选中状态/菜单模板、参考 DPI、匹配阈值、搜索范围和超时。
-内置模板取自用户提供截图的干净图标，参考缩放为 125%，支持小范围尺寸调整。
-当前 `target = "discover"` 以用户提供的发现菜单截图为依据，不依赖窗口标题。
-这个页面包含“朋友圈”菜单项，尚未进入朋友圈动态列表；动态列表需要另行定义页面特征。
-点击前检查窗口、焦点、区域、帧 ID 及截图时效；不能用旧截图中的坐标直接点击当前桌面。
+页面、主题、模板及导航关系统一在 `src/wemo2_collector/profiles.py` 注册。
+`[collector_options.route]` 控制动作及超时，`[collector_options.matcher]` 控制匹配阈值；
+窗口、主题等设置放在 `[collector_options]`。模板参考缩放为 125%，当前只提供深色模板。
+朋友圈动态列表仍没有验证特征，不能把一次点击当作已验证到达。
+点击前检查窗口、焦点、区域、帧 ID 及截图时效。
 
 Windows 微信窗口截图：
 
@@ -48,7 +48,7 @@ uv run wemo2 --config wemo2.screenshot.toml
 ```
 
 截图保存到 `data/screenshot`，文件名包含时间和 UUID，同时保存同名 JSON 元数据。
-先打开并还原微信窗口；默认按精确标题“微信”和微信进程定位，英文界面可修改 `window_title`。
+先打开并还原微信窗口；默认按精确标题“微信”和微信进程定位，英文界面可修改 `[collector_options]` 中的 `window_title`。
 多实例时在配置中设置 `window_process_id`。截图前会将微信置于前台，再按客户区物理坐标截图，
 解决 HWND/GDI 截图无法读取实际渲染内容的问题；不执行点击、滚动或发消息。
 请保持桌面解锁、微信完整位于屏幕内且没有其他窗口、悬浮窗或通知遮挡。
@@ -150,7 +150,8 @@ log_file = "logs/wemo2.log"
 当前只提供 CLI，已移除 `--mode` 和配置中的 `mode` 字段；已有配置文件需要删除该字段。
 
 CLI 只提供 `--help`、`--version`、`--config`、`--log-file`，其他业务配置由 TOML 文件控制。
-JSON 输入在文件中使用 `json_path`。配置文件中的相对路径
+JSON 输入使用 `[collector_options] path = "..."`。采集器自行解释和校验专属字段。
+配置文件中的相对路径
 以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。
 日志级别通过 `log_level` 设置，`--log-file PATH` 可覆盖日志文件。
 日志路径遵循命令行 > 配置文件 > 默认值；业务配置遵循配置文件 > 默认值。
@@ -203,8 +204,9 @@ stores.register("local", LocalStore, parameters={"path": "database"})
 重复名称、错误接口、未实现抽象方法和缺少构造参数均会报错。
 
 注册后在配置文件中设置 `collector = "windows"` 即可。
-如果新实现需要全新的配置字段，仍需在 `AppConfig` 中定义其类型和默认值；
-已有配置字段可直接通过参数映射复用。上面的类名仅作扩展示例，当前尚无 Windows 采集实现。
+新采集器通过 `prepare_options(options, directory)` 校验专属配置，并返回构造参数。
+新增窗口、主题或模板参数不需要修改 `AppConfig` 或 `build_coordinator()`。
+上面的类名仅作扩展示例，现有 Windows 实现注册为 `windows_screenshot`。
 
 ## 开发检查
 
@@ -234,3 +236,33 @@ uv run python -m wemo2_collector.moments_main
 若打开同进程独立窗口，会跟随该窗口截图。动态列表尚未自动验证或读取。
 Airtest 当前依赖 NumPy 1.x 与 OpenCV contrib 4.6，不再同时安装 opencv-python-headless。
 模板定位继续通过独立 Locator 实现，皮肤兼容仍需维护模板；Android 适配留待后续实现。
+
+## 采集器专属配置与组件边界
+
+应用层只接收通用配置字典，页面与截图参数全部由 `wemo2_collector` 维护：
+
+```toml
+collector = "windows_screenshot"
+log_file = "logs/wemo2.log"
+
+[collector_options]
+platform = "windows"
+window_title = "微信"
+screenshot_dir = "data/screenshot"
+theme = "dark"
+
+[collector_options.route]
+target = "moments_entry"
+timeout_seconds = 5
+
+[collector_options.matcher]
+threshold = 0.9
+```
+
+旧的顶层 `platform`、`json_path`、`window_title`、`screenshot_dir` 和 `[route]` 已移除；
+请分别移入 `[collector_options]` 和 `[collector_options.route]`。JSON 采集使用 `path` 字段。
+仓库中的示例、截图和朋友圈调试配置已迁移，F5 入口保持可用。
+
+页面注册器管理识别特征和导航关系，主题注册器管理模板资源，图片匹配器输出匹配位置，
+界面交互器负责截图、定位和校验后的点击。扩展方式见
+[采集器架构](src/wemo2_collector/ARCHITECTURE.md)。

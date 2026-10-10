@@ -1,28 +1,10 @@
 """平台和界面识别的数据结构，不依赖具体 UI/OCR 库。"""
 
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
-
-class Platform(StrEnum):
-    """数据源所在平台，不是运行 wemo2 的主机操作系统。"""
-
-    windows = "windows"
-    android = "android"
-
-
-class Page(StrEnum):
-    """路由器确认的页面状态；无法确认时不能继续盲点。"""
-
-    unknown = "unknown"
-    login = "login"
-    home = "home"
-    discover = "discover"  # 含朋友圈入口的发现菜单，不是动态列表。
-    moments = "moments"
-    detail = "detail"
-    modal = "modal"
+from wemo2.models import Platform
 
 
 class Rect(BaseModel):
@@ -79,16 +61,15 @@ class TextBlock(BaseModel):
 
 
 class RouteConfig(BaseModel):
-    """none 只截图；discover 验证发现菜单；moments_entry 点击菜单入口。"""
+    """路由动作名由 PageRegistry 校验；none 表示只截图。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    target: str = Field(default="none", pattern=r"^(none|discover|moments_entry)$")
-    entry_template: Path = Path(__file__).parent / "assets/moments_entry.png"
-    selected_template: Path = Path(__file__).parent / "assets/discover_selected.png"
-    menu_template: Path = Path(__file__).parent / "assets/discover_menu.png"
-    moments_menu_template: Path = Path(__file__).parent / "assets/moments_menu.png"
-    reference_scale: float = Field(default=1.25, gt=0)  # 模板来自 125% DPI 截图。
-    match_threshold: float = Field(default=0.9, gt=0, le=1)
-    sidebar_ratio: float = Field(default=0.1, gt=0, le=0.25)
-    menu_ratio: float = Field(default=0.4, gt=0, le=0.75)  # 发现菜单所在的左侧区域。
+    target: str = Field(default="none", min_length=1)
     timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+
+
+class MatchConfig(BaseModel):
+    """匹配算法参数，不包含页面或模板的业务名称。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    threshold: float = Field(default=0.9, gt=0, le=1)

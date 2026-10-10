@@ -28,7 +28,7 @@ def show_result(result: RunResult, storage_notice: str | None, log_file: Path) -
     )
     console.print(table)
     for path in result.artifacts:
-        console.print(Text(f"截图已保存：{path}"))
+        console.print(Text(f"采集文件已保存：{path}"))
     if result.stop_reason == "duplicate_limit":
         console.print("已按重复停止策略结束采集。", style="yellow")
     if storage_notice is not None:

@@ -6,17 +6,20 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
-from wemo2_collector.locating import MomentsEntryLocator
+from wemo2_collector.interaction import UiInteractor
+from wemo2_collector.locating import RegistryLocator
+from wemo2_collector.matching import TemplateMatcher
 from wemo2_collector.models import (
     LocatedTarget,
-    Page,
+    MatchConfig,
     Platform,
     Rect,
     RouteConfig,
     Screenshot,
     Surface,
 )
-from wemo2_collector.routing import WindowsPageRouter
+from wemo2_collector.profiles import build_profiles
+from wemo2_collector.routing import PageRouter
 from wemo2_collector.windows.driver import WindowsDriver
 
 
@@ -26,6 +29,7 @@ class RoutingTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name)
         self.config = RouteConfig(target="discover")
+        self.pages, self.themes = build_profiles()
         self.surface = Surface(
             platform=Platform.windows,
             surface_id="123",
@@ -40,7 +44,7 @@ class RoutingTests(unittest.TestCase):
         )
 
     def make_image(self, positions):
-        with Image.open(self.config.entry_template) as template:
+        with Image.open(self.themes.target("dark", "moments_entry").path) as template:
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             for position in positions:
                 image.paste(template, position)
@@ -48,7 +52,7 @@ class RoutingTests(unittest.TestCase):
             image.close()
 
     def test_template_finds_icon_and_rejects_missing_or_multiple_targets(self):
-        locator = MomentsEntryLocator(self.config)
+        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
         self.make_image([(24, 306)])
         target = locator.locate(self.frame, "moments_entry")
         self.assertIsNotNone(target)
@@ -62,7 +66,9 @@ class RoutingTests(unittest.TestCase):
     def test_sidebar_matching_ignores_same_icon_in_content_area(self):
         self.make_image([(400, 306)])
         self.assertIsNone(
-            MomentsEntryLocator(self.config).locate(self.frame, "moments_entry")
+            RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig())).locate(
+                self.frame, "moments_entry"
+            )
         )
 
     def test_click_converts_to_screen_coordinates_after_validation(self):
@@ -129,62 +135,68 @@ class RoutingTests(unittest.TestCase):
             )
 
         locator.locate.side_effect = locate
-        return WindowsPageRouter(driver, screenshotter, locator, self.config)
+        return PageRouter(
+            UiInteractor(driver, screenshotter, locator), self.pages, self.config
+        )
 
     def test_route_clicks_once_and_verifies_page_screenshot(self):
         router = self.make_router()
-        self.assertEqual(router.ensure(Page.discover), self.frame)
-        router.driver.click.assert_called_once()
-        self.assertEqual(len(router.artifacts), 2)
+        self.assertEqual(router.ensure("discover"), self.frame)
+        router.interaction.driver.click.assert_called_once()
+        self.assertEqual(len(router.interaction.artifacts()), 2)
 
     def test_already_open_route_does_not_click_again(self):
         router = self.make_router(already_open=True)
-        self.assertEqual(router.ensure(Page.discover), self.frame)
-        router.driver.click.assert_not_called()
+        self.assertEqual(router.ensure("discover"), self.frame)
+        router.interaction.driver.click.assert_not_called()
 
     def test_missing_icon_does_not_click(self):
         router = self.make_router(found=False)
         with self.assertRaisesRegex(RuntimeError, "未可靠识别"):
-            router.ensure(Page.discover)
-        router.driver.click.assert_not_called()
+            router.ensure("discover")
+        router.interaction.driver.click.assert_not_called()
 
     def test_route_timeout_does_not_repeat_click(self):
         router = self.make_router()
         with patch("wemo2_collector.routing.time.monotonic", side_effect=[0, 6]):
             with self.assertRaisesRegex(RuntimeError, "超时"):
-                router.ensure(Page.discover)
-        router.driver.click.assert_called_once()
+                router.ensure("discover")
+        router.interaction.driver.click.assert_called_once()
 
     def test_detect_requires_both_selected_icon_and_discovery_menu(self):
         driver = MagicMock()
         driver.current_surface.return_value = self.surface
-        locator = MomentsEntryLocator(self.config)
-        router = WindowsPageRouter(driver, MagicMock(), locator, self.config)
+        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
+        router = PageRouter(
+            UiInteractor(driver, MagicMock(), locator), self.pages, self.config
+        )
         with (
-            Image.open(self.config.selected_template) as selected,
-            Image.open(self.config.menu_template) as menu,
+            Image.open(
+                self.themes.target("dark", "discover_selected").path
+            ) as selected,
+            Image.open(self.themes.target("dark", "discover_menu").path) as menu,
         ):
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             image.paste(selected, (24, 306))
             image.save(self.frame.image_path)
-            self.assertEqual(router.detect(self.frame), Page.unknown)
+            self.assertEqual(router.detect(self.frame), "unknown")
             image.paste(menu, (88, 52))
             image.save(self.frame.image_path)
-            self.assertEqual(router.detect(self.frame), Page.discover)
-            self.assertNotEqual(router.detect(self.frame), Page.moments)
+            self.assertEqual(router.detect(self.frame), "discover")
+            self.assertNotEqual(router.detect(self.frame), "moments")
             image.close()
         self.make_image([(24, 306)])
-        self.assertEqual(router.detect(self.frame), Page.home)
+        self.assertEqual(router.detect(self.frame), "home")
 
     def test_route_does_not_claim_feed_from_discovery_reference(self):
         router = self.make_router()
         with self.assertRaisesRegex(ValueError, "动态列表"):
-            router.ensure(Page.moments)
-        router.driver.click.assert_not_called()
+            router.ensure("moments")
+        router.interaction.driver.click.assert_not_called()
 
     def test_moments_menu_locator_finds_row_and_rejects_multiple_rows(self):
-        locator = MomentsEntryLocator(self.config)
-        with Image.open(self.config.moments_menu_template) as template:
+        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
+        with Image.open(self.themes.target("dark", "moments_menu").path) as template:
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             image.paste(template, (94, 116))
             image.save(self.frame.image_path)
@@ -199,37 +211,39 @@ class RoutingTests(unittest.TestCase):
     def test_menu_action_clicks_once_then_saves_unverified_result(self):
         router = self.make_router(already_open=True)
         with patch("wemo2_collector.routing.time.sleep"):
-            self.assertEqual(router.open_moments_entry(), self.frame)
-        router.driver.click.assert_called_once()
-        clicked = router.driver.click.call_args.args[1]
+            self.assertEqual(router.run("moments_entry"), self.frame)
+        router.interaction.driver.click.assert_called_once()
+        clicked = router.interaction.driver.click.call_args.args[1]
         self.assertEqual(clicked.name, "moments_menu")
-        router.driver.follow_foreground.assert_called_once()
-        self.assertEqual(len(router.artifacts), 2)
+        router.interaction.driver.follow_foreground.assert_called_once()
+        self.assertEqual(len(router.interaction.artifacts()), 2)
         # 当前 discover 截图不能被当作朋友圈动态列表。
-        self.assertEqual(router.detect(self.frame), Page.discover)
+        self.assertEqual(router.detect(self.frame), "discover")
 
     def test_missing_menu_action_does_not_click(self):
         router = self.make_router(already_open=True)
-        original_locate = router.locator.locate.side_effect
+        original_locate = router.interaction.locator.locate.side_effect
 
         def locate(frame, name):
             if name == "moments_menu":
                 return None
             return original_locate(frame, name)
 
-        router.locator.locate.side_effect = locate
-        with self.assertRaisesRegex(RuntimeError, "朋友圈菜单未可靠识别"):
-            router.open_moments_entry()
-        router.driver.click.assert_not_called()
+        router.interaction.locator.locate.side_effect = locate
+        with self.assertRaisesRegex(RuntimeError, "moments_menu 未可靠识别"):
+            router.run("moments_entry")
+        router.interaction.driver.click.assert_not_called()
 
     def test_action_follows_both_navigation_steps_without_repeating_clicks(self):
         router = self.make_router()
         with patch("wemo2_collector.routing.time.sleep"):
-            router.open_moments_entry()
-        self.assertEqual(router.driver.click.call_count, 2)
+            router.run("moments_entry")
+        self.assertEqual(router.interaction.driver.click.call_count, 2)
         self.assertEqual(
-            router.driver.click.call_args_list[0].args[1].name, "moments_entry"
+            router.interaction.driver.click.call_args_list[0].args[1].name,
+            "moments_entry",
         )
         self.assertEqual(
-            router.driver.click.call_args_list[1].args[1].name, "moments_menu"
+            router.interaction.driver.click.call_args_list[1].args[1].name,
+            "moments_menu",
         )

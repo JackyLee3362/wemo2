@@ -1,14 +1,13 @@
 # 打开发现菜单，再定位并点击朋友圈一行；保存待验证的结果截图。
 collector = "windows_screenshot"
+log_file = "logs/wemo2.log"
+
+[collector_options]
 platform = "windows"
 window_title = "微信"
 screenshot_dir = "data/screenshot"
-log_file = "logs/wemo2.log"
+theme = "dark"
 
-[route]
+[collector_options.route]
 target = "moments_entry"
-match_threshold = 0.9
-reference_scale = 1.25
-sidebar_ratio = 0.1
-menu_ratio = 0.4
 timeout_seconds = 5

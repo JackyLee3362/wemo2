@@ -1,93 +1,102 @@
-"""Windows 页面路由：定位指南针入口，截图验证发现菜单。"""
+"""通用页面路由：通过注册的页面标志和有向路由执行导航。"""
 
 import time
-from pathlib import Path
 
 from loguru import logger
 
-from wemo2_collector.interfaces import BaseLocator, BasePageRouter, BaseScreenshotter
-from wemo2_collector.models import Page, RouteConfig, Screenshot
-from wemo2_collector.windows.driver import WindowsDriver
+from wemo2_collector.interfaces import BaseInteractor, BasePageRouter
+from wemo2_collector.models import RouteConfig, Screenshot
+from wemo2_collector.pages import PageRegistry, RouteSpec
 
 
-class WindowsPageRouter(BasePageRouter):
+class PageRouter(BasePageRouter):
     def __init__(
-        self,
-        driver: WindowsDriver,
-        screenshotter: BaseScreenshotter,
-        locator: BaseLocator,
-        config: RouteConfig,
+        self, interaction: BaseInteractor, pages: PageRegistry, config: RouteConfig
     ):
-        self.driver = driver
-        self.screenshotter = screenshotter
-        self.locator = locator
+        self.interaction = interaction
+        self.pages = pages
         self.config = config
-        self.artifacts: list[Path] = []
 
-    def _capture(self) -> Screenshot:
-        surface = self.driver.prepare_capture()
-        frame = self.screenshotter.capture(surface)
-        self.driver.verify_capture(surface)
-        self.artifacts.append(frame.image_path)
+    def detect(self, frame: Screenshot) -> str:
+        matches = []
+        cache = {}
+        for page in self.pages.pages.values():
+            if not page.required:
+                continue
+            valid = True
+            for name in page.required + page.forbidden:
+                if name not in cache:
+                    cache[name] = self.interaction.locate(frame, name) is not None
+                if name in page.required and not cache[name]:
+                    valid = False
+                if name in page.forbidden and cache[name]:
+                    valid = False
+            if valid:
+                matches.append(page.name)
+        if len(matches) != 1:
+            return "unknown"
+        return matches[0]
+
+    def ensure(self, page: str) -> Screenshot:
+        """只返回验证过的页面；未配置标志的动态列表不能伪装成功。"""
+        if not self.pages.get_page(page).required:
+            raise ValueError(f"页面 {page} 尚未定义验证特征，动态列表需提供真实样本")
+        return self._navigate(page, require_verified=True)
+
+    def run(self, action: str) -> Screenshot:
+        """执行注册动作，未验证型动作只保存截图并在日志明确状态。"""
+        route = self.pages.get_route(action)
+        return self._navigate(
+            route.destination, require_verified=route.verified, final_route=route
+        )
+
+    def _navigate(
+        self,
+        destination: str,
+        *,
+        require_verified: bool,
+        final_route: RouteSpec | None = None,
+    ) -> Screenshot:
+        frame = self.interaction.capture()
+        current = self.detect(frame)
+        if current == destination:
+            return frame
+        if current == "unknown":
+            raise RuntimeError("当前页面未可靠识别，未执行导航")
+        if final_route is None:
+            steps = self.pages.path(current, destination)
+        else:
+            steps = self.pages.path(current, final_route.source) + [final_route]
+        # 完整校验路径再执行第一个动作，不能先点击再发现路径不可验证。
+        for index, route in enumerate(steps):
+            if not route.verified and (require_verified or index != len(steps) - 1):
+                raise ValueError("路径包含未验证页面，不能继续导航")
+        for route in steps:
+            self.interaction.click(frame, route.target)
+            time.sleep(route.settle_seconds)
+            if not route.verified:
+                frame = self.interaction.capture(
+                    follow_foreground=route.follow_foreground
+                )
+                logger.warning(
+                    "已执行动作 {}，页面 {} 待验证：{}",
+                    route.name,
+                    route.destination,
+                    frame.image_path,
+                )
+                return frame
+            deadline = time.monotonic() + self.config.timeout_seconds
+            while time.monotonic() < deadline:
+                frame = self.interaction.capture(
+                    follow_foreground=route.follow_foreground
+                )
+                if self.detect(frame) == route.destination:
+                    logger.info("页面 {} 已验证", route.destination)
+                    break
+                time.sleep(0.2)
+            else:
+                raise RuntimeError(f"导航至 {route.destination} 超时；未重复点击")
         return frame
 
-    def detect(self, frame: Screenshot) -> Page:
-        # 页面分类只依赖截图；实时性与焦点由截图/点击流程分别校验。
-        selected = self.locator.locate(frame, "discover_selected")
-        if selected is not None:
-            menu = self.locator.locate(frame, "discover_menu")
-            if menu is not None:
-                return Page.discover
-            return Page.unknown
-        if self.locator.locate(frame, "moments_entry") is not None:
-            return Page.home
-        return Page.unknown
-
-    def ensure(self, page: Page) -> Screenshot:
-        if page != Page.discover:
-            raise ValueError(
-                "当前参考图只能验证发现菜单；朋友圈动态列表需另行定义页面特征"
-            )
-        frame = self._capture()
-        if self.detect(frame) == page:
-            return frame
-        target = self.locator.locate(frame, "moments_entry")
-        if target is None:
-            raise RuntimeError(
-                "朋友圈入口未可靠识别或匹配不唯一，请检查模板、主题和 DPI"
-            )
-        logger.info(
-            "朋友圈入口匹配成功，分数 {:.3f}，位置 {}", target.score, target.bounds
-        )
-        self.driver.click(frame, target)
-        deadline = time.monotonic() + self.config.timeout_seconds
-        while time.monotonic() < deadline:
-            result = self._capture()
-            if self.detect(result) == page:
-                logger.info("已通过选中图标与菜单特征验证发现页面")
-                return result
-            time.sleep(0.2)
-        raise RuntimeError("点击后未识别到选中的指南针与发现菜单，路由超时")
-
-    def open_moments_entry(self) -> Screenshot:
-        """验证发现页后点击朋友圈菜单一次，保存待验证的结果截图。"""
-        frame = self.ensure(Page.discover)
-        target = self.locator.locate(frame, "moments_menu")
-        if target is None:
-            raise RuntimeError("朋友圈菜单未可靠识别或匹配不唯一，未执行点击")
-        logger.info(
-            "朋友圈菜单匹配成功，分数 {:.3f}，位置 {}", target.score, target.bounds
-        )
-        self.driver.click(frame, target)
-        time.sleep(0.5)
-        # 某些微信版本会打开独立窗口；只能跟随同进程的前台窗口。
-        self.driver.follow_foreground()
-        result = self._capture()
-        logger.warning(
-            "已执行朋友圈菜单点击并保存截图，动态列表页面仍待验证：{}",
-            result.image_path,
-        )
-        return result
-
     def advance(self) -> Screenshot | None:
-        raise NotImplementedError("当前只实现朋友圈入口路由，尚未实现滚动采集")
+        raise NotImplementedError("当前尚未实现滚动采集")

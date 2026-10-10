@@ -5,8 +5,7 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from wemo2.interfaces import BaseCollector
-from wemo2.models import Observation
-from wemo2_collector.models import Platform
+from wemo2.models import Observation, Platform
 
 # 保留原模块的接口导入位置。
 Collector = BaseCollector

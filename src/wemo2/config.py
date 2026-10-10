@@ -2,22 +2,18 @@
 
 import tomllib
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
-from wemo2_collector.models import Platform, RouteConfig
 
 
 class AppConfig(StopPolicy):
     """应用启动设置；未知键报错，防止配置拼写错误被悄悄忽略。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    platform: Platform = Field(
-        default=Platform.windows, description="采集源平台：windows 或 android"
-    )
     collector: str = Field(
         default_factory=collectors.default_name, description="采集器注册名称"
     )
@@ -27,17 +23,12 @@ class AppConfig(StopPolicy):
     store: str = Field(
         default_factory=stores.default_name, description="存储器注册名称"
     )
-    json_path: Path | None = Field(default=None, description="JSON 采集器的输入文件")
-    screenshot_dir: Path = Field(
-        default=Path("data/screenshot"), description="窗口截图保存目录"
+    collector_options: dict[str, Any] = Field(
+        default_factory=dict, description="采集器专属设置，由注册的采集器自行校验"
     )
-    window_title: str = Field(
-        default="微信", min_length=1, description="微信窗口的精确标题"
+    config_directory: Path = Field(
+        default_factory=Path.cwd, description="专属配置相对路径的基准目录"
     )
-    window_process_id: int | None = Field(
-        default=None, gt=0, description="多实例时指定微信进程"
-    )
-    route: RouteConfig = Field(default_factory=RouteConfig, description="页面路由设置")
     database: Path = Field(
         default=Path("data/wemo2.sqlite3"), description="SQLite 数据库文件"
     )
@@ -57,29 +48,13 @@ class AppConfig(StopPolicy):
 
 def _resolve_paths(values: dict, directory: Path) -> dict:
     result = dict(values)
-    for key in ("database", "json_path", "log_file", "screenshot_dir"):
+    for key in ("database", "log_file"):
         value = result.get(key)
         if isinstance(value, (str, Path)):
             path = Path(value)
             if not path.is_absolute():
                 path = (directory / path).resolve()
             result[key] = path
-    route = result.get("route")
-    if isinstance(route, dict):
-        route = dict(route)
-        for key in (
-            "entry_template",
-            "selected_template",
-            "menu_template",
-            "moments_menu_template",
-        ):
-            value = route.get(key)
-            if isinstance(value, (str, Path)):
-                path = Path(value)
-                if not path.is_absolute():
-                    path = (directory / path).resolve()
-                route[key] = path
-        result["route"] = route
     return result
 
 
@@ -106,4 +81,9 @@ def load_config(
     values = _resolve_paths(defaults, directory)
     values.update(file_values)
     values.update(command_values)
+    values["config_directory"] = path.resolve().parent
+    if config_path is None and not path.exists():
+        values["config_directory"] = directory
+    if "collector_options" in command_values:
+        values["config_directory"] = directory
     return AppConfig.model_validate(values)

@@ -1,21 +1,26 @@
 """组件名称、实现类及构造参数的统一注册入口。"""
 
 import inspect
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from wemo2.collector import JsonCollector
+from wemo2.collector_config import load_json_options, load_pseudo_options
 from wemo2.deduplicator import Deduplicator
 from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
 from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
 from wemo2.store import SQLiteStore
 from wemo2_collector.collector import WindowsScreenshotCollector
+from wemo2_collector.config import load_windows_options
 
 
 class ComponentSpec(BaseModel):
     """注册信息；parameters 将构造参数名映射到配置字段名。"""
 
+    prepare_options: Callable[[dict, Path], dict] | None = None
     implementation: type
     parameters: dict[str, str] = Field(default_factory=dict)
     optional_parameters: dict[str, str] = Field(default_factory=dict)
@@ -37,6 +42,7 @@ class ComponentRegistry:
         name: str,
         implementation: type,
         *,
+        prepare_options: Callable[[dict, Path], dict] | None = None,
         parameters: dict[str, str] | None = None,
         optional_parameters: dict[str, str] | None = None,
         defaults: dict[str, str] | None = None,
@@ -58,6 +64,7 @@ class ComponentRegistry:
             raise ValueError(f"{self.label}已经设置默认实现")
         spec = ComponentSpec(
             implementation=implementation,
+            prepare_options=prepare_options,
             parameters=parameters or {},
             optional_parameters=optional_parameters or {},
             defaults=defaults or {},
@@ -81,23 +88,33 @@ class ComponentRegistry:
             raise ValueError(f"未知{self.label}：{name}；可选：{choices}")
         return self._components[name]
 
-    def validate(self, name: str, settings: dict) -> None:
-        spec = self.get(name)
-        for field in spec.parameters.values():
-            if settings.get(field) is None:
-                raise ValueError(f"{self.label} {name} 需要配置字段 {field}")
-
-    def create(self, name: str, settings: dict) -> Any:
-        """只传入注册时声明的构造参数，不把全部配置交给实现类。"""
-        self.validate(name, settings)
+    def _arguments(self, name: str, settings: dict) -> dict:
+        """按注册信息解释参数；专属选项只交给实现方加载函数。"""
         spec = self.get(name)
         arguments = {}
         for parameter, field in spec.parameters.items():
+            if settings.get(field) is None:
+                raise ValueError(f"{self.label} {name} 需要配置字段 {field}")
             arguments[parameter] = settings[field]
         for parameter, field in spec.optional_parameters.items():
             if field in settings:
                 arguments[parameter] = settings[field]
-        return spec.implementation(**arguments)
+        if spec.prepare_options is not None:
+            arguments.update(
+                spec.prepare_options(
+                    settings.get("collector_options", {}),
+                    Path(settings.get("config_directory", Path.cwd())),
+                )
+            )
+        return arguments
+
+    def validate(self, name: str, settings: dict) -> None:
+        self._arguments(name, settings)
+
+    def create(self, name: str, settings: dict) -> Any:
+        """只传入声明或加载函数返回的参数，不把应用全部配置交给实现。"""
+        arguments = self._arguments(name, settings)
+        return self.get(name).implementation(**arguments)
 
 
 collectors = ComponentRegistry("采集器", BaseCollector)
@@ -107,24 +124,19 @@ stores = ComponentRegistry("存储器", BaseStore)
 # 新增内置实现只需在这里导入并注册，不修改 CLI、配置模型或协调器。
 IMPORT_COLLECTOR = "json"
 collectors.register(
-    "pseudo", PseudoCollector, default=True, parameters={"platform": "platform"}
+    "pseudo", PseudoCollector, default=True, prepare_options=load_pseudo_options
 )
 collectors.register(
     IMPORT_COLLECTOR,
     JsonCollector,
-    parameters={"path": "json_path", "platform": "platform"},
+    prepare_options=load_json_options,
     defaults={"deduplicator": "stable", "store": "sqlite"},
 )
 deduplicators.register("pseudo", PseudoDeduplicator, default=True)
 collectors.register(
     "windows_screenshot",
     WindowsScreenshotCollector,
-    parameters={
-        "platform": "platform",
-        "screenshot_dir": "screenshot_dir",
-        "window_title": "window_title",
-    },
-    optional_parameters={"window_process_id": "window_process_id", "route": "route"},
+    prepare_options=load_windows_options,
 )
 deduplicators.register("stable", Deduplicator)
 stores.register(

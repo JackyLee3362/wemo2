@@ -16,7 +16,7 @@ def import_json(path: str, database: str) -> RunResult:
         IMPORT_COLLECTOR,
         defaults["deduplicator"],
         defaults["store"],
-        json_path=path,
+        collector_options={"path": path},
         database=database,
     )
     with coordinator.store:
@@ -38,14 +38,10 @@ def run_config(config: AppConfig) -> RunResult:
         config.collector,
         config.deduplicator,
         config.store,
-        json_path=config.json_path,
+        collector_options=config.collector_options,
+        config_directory=config.config_directory,
         database=config.database,
         stop_policy=policy,
-        platform=config.platform,
-        screenshot_dir=config.screenshot_dir,
-        window_title=config.window_title,
-        window_process_id=config.window_process_id,
-        route=config.route,
     )
     with coordinator.store:
         return coordinator.run()

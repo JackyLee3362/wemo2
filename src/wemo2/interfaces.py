@@ -10,7 +10,7 @@ from wemo2.models import Action, Decision, Observation, Post, SavedObservation
 
 class BaseCollector(ABC):
     def artifacts(self) -> list[Path]:
-        """本次采集保存的文件；截图阶段可没有动态记录。"""
+        """本次采集保存的证据文件；不规定文件格式或采集技术。"""
         return []
 
     @abstractmethod

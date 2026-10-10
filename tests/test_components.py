@@ -48,8 +48,12 @@ class ComponentTests(unittest.TestCase):
                         collector,
                         deduplicator,
                         store,
-                        json_path=Path(__file__).parents[1]
-                        / "examples/observations.json",
+                        collector_options={
+                            "path": Path(__file__).parents[1]
+                            / "examples/observations.json"
+                        }
+                        if collector == "json"
+                        else {},
                         database=Path(directory)
                         / f"{collector}-{deduplicator}.sqlite3",
                     )

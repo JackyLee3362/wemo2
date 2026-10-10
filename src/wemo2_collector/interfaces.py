@@ -1,9 +1,11 @@
 """界面采集的能力接口；具体 Windows/Android 实现留待后续接入。"""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from wemo2.models import Observation
-from wemo2_collector.models import LocatedTarget, Page, Screenshot, Surface, TextBlock
+from wemo2_collector.models import LocatedTarget, Screenshot, Surface, TextBlock
+from wemo2_collector.themes import TemplateSpec
 
 
 class BaseDriver(ABC):
@@ -16,6 +18,18 @@ class BaseDriver(ABC):
     @abstractmethod
     def current_surface(self) -> Surface:
         """重新读取位置与大小，供动作前校验截图是否已经失效。"""
+
+    @abstractmethod
+    def prepare_capture(self) -> Surface:
+        """确认目标可截图，返回物理像素区域。"""
+
+    @abstractmethod
+    def verify_capture(self, surface: Surface) -> None:
+        """校验窗口、坐标及焦点未变化。"""
+
+    @abstractmethod
+    def follow_foreground(self) -> None:
+        """跟随本次会话允许的前台窗口。"""
 
     @abstractmethod
     def click(self, frame: Screenshot, target: LocatedTarget) -> None:
@@ -58,12 +72,16 @@ class BasePageRouter(ABC):
     """识别页面并执行有后置验证的路由，不承担数据去重。"""
 
     @abstractmethod
-    def detect(self, frame: Screenshot) -> Page:
+    def detect(self, frame: Screenshot) -> str:
         """通过页面标志判断当前状态。"""
 
     @abstractmethod
-    def ensure(self, page: Page) -> Screenshot:
+    def ensure(self, page: str) -> Screenshot:
         """到达目标页并返回验证成功的最新截图，未知页面或超时则报错。"""
+
+    @abstractmethod
+    def run(self, action: str) -> Screenshot:
+        """执行已注册的导航动作，未验证结果只能作为证据交付。"""
 
     @abstractmethod
     def advance(self) -> Screenshot | None:
@@ -76,3 +94,33 @@ class BaseMomentReader(ABC):
     @abstractmethod
     def read(self, frame: Screenshot) -> list[Observation]:
         """分割卡片并提取字段，附带原始截图证据及字段完整度。"""
+
+
+class BaseImageMatcher(ABC):
+    """纯图片匹配能力，不执行点击。"""
+
+    @abstractmethod
+    def match(
+        self, frame: Screenshot, name: str, spec: TemplateSpec
+    ) -> LocatedTarget | None:
+        """返回可靠且唯一的匹配，低分或歧义返回 None。"""
+
+
+class BaseInteractor(ABC):
+    """组合截图、定位和平台动作；路由只依赖该接口。"""
+
+    @abstractmethod
+    def capture(self, *, follow_foreground: bool = False) -> Screenshot:
+        """验证并截图，可按需跟随同一会话的前台窗口。"""
+
+    @abstractmethod
+    def locate(self, frame: Screenshot, name: str) -> LocatedTarget | None:
+        """查找语义目标，不执行动作。"""
+
+    @abstractmethod
+    def click(self, frame: Screenshot, name: str) -> LocatedTarget:
+        """先定位、再校验、最后点击，不允许失败后使用固定坐标。"""
+
+    @abstractmethod
+    def artifacts(self) -> list[Path]:
+        """返回本次会话截图证据文件。"""

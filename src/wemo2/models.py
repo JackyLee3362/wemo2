@@ -1,5 +1,6 @@
 """组件间的 Pydantic 数据契约；JSON 用于导入和持久化。"""
 
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
@@ -20,6 +21,13 @@ Identifier = Annotated[str, StringConstraints(strict=True, min_length=1, pattern
 FieldStatus = Literal["unknown", "partial", "complete"]
 # created=新动态，merged=内容修订，unchanged=重复或无内容变化。
 Action = Literal["created", "merged", "unchanged"]
+
+
+class Platform(StrEnum):
+    """采集数据源平台，属于数据来源契约，不包含界面实现信息。"""
+
+    windows = "windows"
+    android = "android"
 
 
 class DataModel(BaseModel):

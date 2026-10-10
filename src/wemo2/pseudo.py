@@ -13,11 +13,11 @@ from wemo2.models import (
     Content,
     Decision,
     Observation,
+    Platform,
     Post,
     SavedObservation,
     Source,
 )
-from wemo2_collector.models import Platform
 
 
 class PseudoCollector(BaseCollector):

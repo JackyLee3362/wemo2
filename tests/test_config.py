@@ -48,12 +48,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_file_and_cli_paths_have_distinct_base_directories(self):
         path = self.write_config(
-            'database = "saved.sqlite3"\njson_path = "input.json"\n',
+            'collector = "json"\ndatabase = "saved.sqlite3"\n[collector_options]\npath = "input.json"\n',
             self.cwd / "settings/custom.toml",
         )
         config = load_config({"database": "override.sqlite3"}, path, cwd=self.cwd)
         self.assertEqual(config.database, self.cwd / "override.sqlite3")
-        self.assertEqual(config.json_path, self.cwd / "settings/input.json")
+        self.assertEqual(config.collector_options["path"], "input.json")
 
     def test_explicit_missing_file_and_invalid_config_report_errors(self):
         with self.assertRaises(FileNotFoundError):
@@ -65,11 +65,13 @@ class ConfigTests(unittest.TestCase):
                     load_config(cwd=self.cwd)
 
     def test_json_defaults_do_not_override_explicit_file_options(self):
-        self.write_config('collector = "json"\njson_path = "input.json"\n')
+        self.write_config(
+            'collector = "json"\n[collector_options]\npath = "input.json"\n'
+        )
         config = load_config(cwd=self.cwd)
         self.assertEqual((config.deduplicator, config.store), ("stable", "sqlite"))
         self.write_config(
-            'collector = "json"\njson_path = "input.json"\nstore = "pseudo"\n'
+            'collector = "json"\nstore = "pseudo"\n[collector_options]\npath = "input.json"\n'
         )
         self.assertEqual(load_config(cwd=self.cwd).store, "pseudo")
 
@@ -81,11 +83,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.log_level, "DEBUG")
 
     def test_json_input_is_loaded_from_config(self):
-        path = self.write_config('collector = "json"\njson_path = "records.json"\n')
+        path = self.write_config(
+            'collector = "json"\n[collector_options]\npath = "records.json"\n'
+        )
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
             config = self.parse_cli(["--config", str(path)])
         self.assertEqual((config.collector, config.store), ("json", "sqlite"))
-        self.assertEqual(config.json_path, self.cwd / "records.json")
+        self.assertEqual(config.collector_options["path"], "records.json")
 
     def test_invalid_cli_input_exits_before_execution(self):
         path = self.write_config('collector = "json"\n')

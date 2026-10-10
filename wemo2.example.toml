@@ -6,6 +6,8 @@ store = "pseudo"
 database = "data/wemo2.sqlite3"
 log_level = "INFO"
 log_file = "logs/wemo2.log"
+duplicate_stop = "never"  # first：重复立即停；after_n：累计重复 N 次停；never：不停。
+duplicate_limit = 3  # 仅 after_n 生效，必须大于等于 1。
 
 # JSON 采集时改为 collector = "json"，并设置输入路径。
 # json_path = "examples/observations.json"

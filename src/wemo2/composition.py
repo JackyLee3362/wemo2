@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from wemo2.coordinator import Coordinator
+from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
 
 
@@ -13,6 +14,7 @@ def build_coordinator(
     *,
     json_path: str | Path | None = None,
     database: str | Path = "data/wemo2.sqlite3",
+    stop_policy: StopPolicy | None = None,
 ) -> Coordinator:
     if collector is None:
         collector = collectors.default_name()
@@ -28,4 +30,4 @@ def build_coordinator(
     source = collectors.create(collector, settings)
     strategy = deduplicators.create(deduplicator, settings)
     target = stores.create(store, settings)
-    return Coordinator(source, strategy, target)
+    return Coordinator(source, strategy, target, stop_policy)

@@ -48,6 +48,12 @@ def start(
     database: Path | None = typer.Option(None, help="SQLite 文件路径"),
     log_level: LogLevel | None = typer.Option(None, help="日志级别"),
     log_file: Path | None = typer.Option(None, help="日志文件路径"),
+    duplicate_stop: str | None = typer.Option(
+        None, help="重复停止策略：first、after_n、never"
+    ),
+    duplicate_limit: int | None = typer.Option(
+        None, min=1, help="after_n 策略的累计重复次数"
+    ),
     version: bool = typer.Option(
         False, "--version", callback=show_version, is_eager=True, help="显示版本并退出"
     ),
@@ -68,6 +74,10 @@ def start(
         values["log_level"] = log_level.value
     if log_file is not None:
         values["log_file"] = log_file
+    if duplicate_stop is not None:
+        values["duplicate_stop"] = duplicate_stop
+    if duplicate_limit is not None:
+        values["duplicate_limit"] = duplicate_limit
     if json_path is not None:
         if collector is not None and collector != IMPORT_COLLECTOR:
             raise typer.BadParameter(f"--import-json 需要采集器 {IMPORT_COLLECTOR}")

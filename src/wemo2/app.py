@@ -6,7 +6,7 @@ from rich.text import Text
 from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig
 from wemo2.console import error_console, show_result
-from wemo2.models import RunResult
+from wemo2.models import RunResult, StopPolicy
 from wemo2.registry import IMPORT_COLLECTOR, collectors, stores
 
 
@@ -31,12 +31,16 @@ def run_demo() -> RunResult:
 
 def run_config(config: AppConfig) -> RunResult:
     """使用合并后的配置组装组件并执行一次流程。"""
+    policy = StopPolicy(
+        duplicate_stop=config.duplicate_stop, duplicate_limit=config.duplicate_limit
+    )
     coordinator = build_coordinator(
         config.collector,
         config.deduplicator,
         config.store,
         json_path=config.json_path,
         database=config.database,
+        stop_policy=policy,
     )
     with coordinator.store:
         return coordinator.run()

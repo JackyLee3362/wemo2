@@ -343,6 +343,13 @@ save_checkpoint(checkpoint, expected_checkpoint_version) -> Checkpoint
 
 ## 7. 一次自动采集流程
 
+当前最小实现支持重复停止策略：去重器返回 `Decision.is_duplicate`，协调器在当前记录
+成功提交后累计重复次数，并根据 `StopPolicy` 的 `first`、`after_n`、`never` 决定是否结束。
+`after_n` 使用本次运行累计计数，不要求连续重复；默认 `never`。已有动态内容变化仍属于
+身份重复，但必须先保存修订。`RunResult.duplicates` 和 `stop_reason` 描述计数及结束原因。
+协调器结束时调用采集器的 `stop()`，并关闭生成器；真实采集器需要逐条读取或响应停止信号。
+策略停止意味着主动结束本次遍历，不能据此宣称完整覆盖请求范围。
+
 ```text
 读取能力、配置及检查点
 循环：

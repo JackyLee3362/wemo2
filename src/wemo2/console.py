@@ -18,13 +18,17 @@ def show_result(result: RunResult, storage_notice: str | None, log_file: Path) -
     table.add_column("新增", justify="right")
     table.add_column("更新", justify="right")
     table.add_column("未变更", justify="right")
+    table.add_column("重复", justify="right")
     table.add_row(
         str(result.collected),
         str(result.created),
         str(result.merged),
         str(result.unchanged),
+        str(result.duplicates),
     )
     console.print(table)
+    if result.stop_reason == "duplicate_limit":
+        console.print("已按重复停止策略结束采集。", style="yellow")
     if storage_notice is not None:
         console.print(storage_notice, style="yellow")
     console.print(Text(f"日志文件：{log_file}"))

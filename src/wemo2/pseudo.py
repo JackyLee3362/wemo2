@@ -66,7 +66,9 @@ class PseudoDeduplicator(BaseDeduplicator):
                 raise ValueError(
                     "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
                 )
-            return Decision(action="unchanged", post_id=previous.post_id)
+            return Decision(
+                action="unchanged", post_id=previous.post_id, is_duplicate=True
+            )
         return Decision(action="created")
 
 

@@ -4,12 +4,13 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
+from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
 
 
-class AppConfig(BaseModel):
+class AppConfig(StopPolicy):
     """应用启动设置；未知键报错，防止配置拼写错误被悄悄忽略。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)

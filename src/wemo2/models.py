@@ -144,6 +144,22 @@ class Decision(BaseModel):
     action: Action
     post_id: Identifier | None = None  # 匹配到的内部动态 ID；新建时由存储器分配。
     identity_key: str | None = None  # 去重策略生成的源身份键，不是正文哈希。
+    is_duplicate: bool = False  # 是否匹配到已存在的记录/动态，与是否发生修订分开。
+
+
+class StopPolicy(BaseModel):
+    """按本次运行累计重复次数停止；never 保持原来的完整遍历行为。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    duplicate_stop: Literal["first", "after_n", "never"] = "never"
+    duplicate_limit: int = Field(default=3, ge=1, strict=True)
+
+    def should_stop(self, duplicates: int) -> bool:
+        if self.duplicate_stop == "never":
+            return False
+        if self.duplicate_stop == "first":
+            return duplicates >= 1
+        return duplicates >= self.duplicate_limit
 
 
 class SavedObservation(BaseModel):
@@ -175,3 +191,5 @@ class RunResult(BaseModel):
     created: int = Field(default=0, ge=0)
     merged: int = Field(default=0, ge=0)
     unchanged: int = Field(default=0, ge=0)
+    duplicates: int = Field(default=0, ge=0)  # 本次累计重复次数，不等同于 unchanged。
+    stop_reason: Literal["completed", "duplicate_limit"] = "completed"

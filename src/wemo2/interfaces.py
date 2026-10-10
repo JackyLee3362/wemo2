@@ -12,6 +12,10 @@ class BaseCollector(ABC):
     def collect(self) -> Iterable[Observation]:
         """读取数据源，产生统一的采集记录。"""
 
+    def stop(self) -> None:
+        """停止采集并释放资源；后台采集实现应停止工作线程，简单采集器可不覆盖。"""
+        return None
+
 
 class BaseStore(ABC):
     @abstractmethod

@@ -33,7 +33,9 @@ class Deduplicator(BaseDeduplicator):
                 raise ValueError(
                     "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
                 )
-            return Decision(action="unchanged", post_id=previous.post_id)
+            return Decision(
+                action="unchanged", post_id=previous.post_id, is_duplicate=True
+            )
 
         source = observation.source
         identity = None
@@ -51,5 +53,8 @@ class Deduplicator(BaseDeduplicator):
         if existing is None:
             return Decision(action="created", identity_key=identity)
         return Decision(
-            action="merged", post_id=existing.post_id, identity_key=identity
+            action="merged",
+            post_id=existing.post_id,
+            identity_key=identity,
+            is_duplicate=True,
         )

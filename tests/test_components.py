@@ -28,6 +28,8 @@ class ComponentTests(unittest.TestCase):
                 "created": 2,
                 "merged": 0,
                 "unchanged": 1,
+                "duplicates": 1,
+                "stop_reason": "completed",
             },
         )
         self.assertEqual(len(coordinator.store.list_posts()), 2)

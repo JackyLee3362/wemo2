@@ -115,6 +115,33 @@ JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。�
 配置模型与加载逻辑位于 `src/wemo2/config.py`，
 Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。
 
+## 重复停止策略
+
+由去重器通过 `Decision.is_duplicate` 判断重复，由协调器根据配置决定是否继续消费采集记录。
+不使用存储器的 `unchanged` 统计来判断重复，因为匹配到的已有动态可能产生内容修订。
+触发停止的当前记录先完成保存，再停止，不再请求下一条数据。
+
+| 配置值 | 行为 |
+| --- | --- |
+| `first` | 第一次重复立即停止 |
+| `after_n` | 本次运行累计重复 N 次后停止，中间遇到新动态不清零 |
+| `never` | 重复后继续采集，默认值 |
+
+```powershell
+uv run wemo2 --duplicate-stop first
+uv run wemo2 --duplicate-stop after_n --duplicate-limit 3
+uv run wemo2 --duplicate-stop never
+```
+
+TOML 使用 `duplicate_stop` 和 `duplicate_limit`，同样遵循命令行 > 文件 > 默认值。
+计数在每次运行开始时重置。提前停止会展示原因，不表示已遍历全部数据。
+策略不会根据正文相同自行猜测重复；能识别哪些重复取决于所选去重器。
+
+采集器应逐条产生记录，且仅在协调器请求下一条时执行下一步读取。
+协调器在正常结束、提前停止或异常时都会调用 `collector.stop()`；生成器也会关闭。
+后台采集器应覆盖 `stop()` 停止后台任务并释放资源。JSON 导入器目前先加载并校验整个文件，
+提前停止只影响后续处理，不能撤销已经完成的文件读取。
+
 ## 添加组件实现
 
 组件名称和实现类统一维护在 `src/wemo2/registry.py`。新实现继承对应抽象类后，

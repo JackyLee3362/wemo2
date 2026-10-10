@@ -9,12 +9,62 @@ from typer.testing import CliRunner
 
 from wemo2.cli import cli
 from wemo2.composition import build_coordinator
+from wemo2.config import AppConfig
+from wemo2_collector.main import run_collector
 from wemo2_collector.models import Platform, Rect, Screenshot, Surface
 from wemo2_collector.windows.driver import WindowsDriver
 from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
 
 class WindowsScreenshotTests(unittest.TestCase):
+    def test_surface_uses_client_size_and_screen_origin_instead_of_window_frame(self):
+        user32 = MagicMock()
+        user32.IsWindow.return_value = True
+        user32.IsWindowVisible.return_value = True
+        user32.IsIconic.return_value = False
+        user32.GetDpiForWindow.return_value = 144
+
+        def get_client_rect(handle, pointer):
+            rect = pointer._obj
+            rect.left = 0
+            rect.top = 0
+            rect.right = 80
+            rect.bottom = 60
+            return True
+
+        def client_to_screen(handle, pointer):
+            point = pointer._obj
+            point.x = -92
+            point.y = 81
+            return True
+
+        user32.GetClientRect.side_effect = get_client_rect
+        user32.ClientToScreen.side_effect = client_to_screen
+        driver = WindowsDriver()
+        driver.user32 = user32
+        driver.window = SimpleNamespace(NativeWindowHandle=123)
+        surface = driver.current_surface()
+        self.assertEqual(surface.bounds, Rect(x=-92, y=81, width=80, height=60))
+        self.assertEqual(surface.scale, 1.5)
+        user32.GetWindowRect.assert_not_called()
+
+    def test_debug_entry_only_runs_collector_and_releases_it(self):
+        collector = MagicMock()
+        collector.collect.return_value = []
+        collector.artifacts.return_value = [Path("data/screenshot/example.png")]
+        config = AppConfig(collector="windows_screenshot")
+        with (
+            patch("wemo2_collector.main.collectors.create", return_value=collector),
+            patch("wemo2.registry.stores.create") as store,
+            patch("wemo2.registry.deduplicators.create") as deduplicator,
+        ):
+            paths = run_collector(config)
+        self.assertEqual(paths, [Path("data/screenshot/example.png")])
+        collector.collect.assert_called_once()
+        collector.stop.assert_called_once()
+        store.assert_not_called()
+        deduplicator.assert_not_called()
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

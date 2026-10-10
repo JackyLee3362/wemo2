@@ -35,9 +35,13 @@ class WindowsDriver(BaseDriver):
         self.user32.IsIconic.argtypes = [wintypes.HWND]
         self.user32.IsWindow.argtypes = [wintypes.HWND]
         self.user32.IsWindowVisible.argtypes = [wintypes.HWND]
-        self.user32.GetWindowRect.argtypes = [
+        self.user32.GetClientRect.argtypes = [
             wintypes.HWND,
             ctypes.POINTER(wintypes.RECT),
+        ]
+        self.user32.ClientToScreen.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.POINT),
         ]
         self.user32.GetDpiForWindow.argtypes = [wintypes.HWND]
         self.initializer = uia.UIAutomationInitializerInThread()
@@ -74,7 +78,11 @@ class WindowsDriver(BaseDriver):
         if self.user32.IsIconic(handle):
             raise RuntimeError("微信窗口已最小化，请先还原窗口")
         rect = wintypes.RECT()
-        if not self.user32.GetWindowRect(handle, ctypes.byref(rect)):
+        # Pillow 的 HWND 截图使用客户区，不能与整个窗口外框的尺寸比较。
+        if not self.user32.GetClientRect(handle, ctypes.byref(rect)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        origin = wintypes.POINT(rect.left, rect.top)
+        if not self.user32.ClientToScreen(handle, ctypes.byref(origin)):
             raise ctypes.WinError(ctypes.get_last_error())
         dpi = self.user32.GetDpiForWindow(handle)
         if dpi == 0:
@@ -83,8 +91,8 @@ class WindowsDriver(BaseDriver):
             platform=Platform.windows,
             surface_id=str(handle),
             bounds=Rect(
-                x=rect.left,
-                y=rect.top,
+                x=origin.x,
+                y=origin.y,
                 width=rect.right - rect.left,
                 height=rect.bottom - rect.top,
             ),

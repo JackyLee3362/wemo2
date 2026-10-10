@@ -41,6 +41,12 @@ VS Code 调试入口为项目根目录的 `main.py`。先执行 `uv sync`，安�
 Python 和 Python Debugger 扩展，再按 F5 选择“wemo2: 调试 CLI”。配置使用项目
 `.venv` 中的 Windows Python；可修改 `.vscode/launch.json` 的 `args` 传入命令行选项。
 
+独立调试采集器：在 VS Code 的运行与调试列表中选择“wemo2_collector: 调试微信截图”，
+再按 F5。入口为 `src/wemo2_collector/main.py`，读取根目录的 `wemo2.screenshot.toml`，
+只执行采集器，不创建去重器或存储器；截图仍保存到 `data/screenshot`。
+可在 `collector.py`、`windows/driver.py`、`windows/screenshot.py` 中设置断点。
+也可运行 `uv run python -m wemo2_collector.main`。
+
 先运行完全由模拟组件组成的流程，无需文件、微信或数据库：
 
 ```powershell

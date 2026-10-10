@@ -22,7 +22,11 @@ class WindowsScreenshotter(BaseScreenshotter):
         image = ImageGrab.grab(window=int(surface.surface_id))
         try:
             if image.size != (surface.bounds.width, surface.bounds.height):
-                raise RuntimeError("截图尺寸与窗口不一致，请重试；窗口可能已移动或缩放")
+                raise RuntimeError(
+                    f"截图尺寸 {image.width}x{image.height} 与客户区尺寸 "
+                    f"{surface.bounds.width}x{surface.bounds.height} 不一致"
+                    f"（DPI 缩放 {surface.scale}），请检查 DPI 或窗口尺寸变化"
+                )
             if image.convert("RGB").getbbox() is None:
                 raise RuntimeError("微信窗口返回了全黑截图，请确认窗口正常显示")
             captured_at = datetime.now(UTC)

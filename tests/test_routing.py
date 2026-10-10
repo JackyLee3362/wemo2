@@ -1,4 +1,3 @@
-import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -75,14 +74,14 @@ class RoutingTests(unittest.TestCase):
             method="template",
         )
         driver = WindowsDriver()
-        uia = MagicMock()
+        driver.device = MagicMock()
+        driver.device.get_pos.return_value = (5, 8)
         with (
-            patch.dict(sys.modules, {"uiautomation": uia}),
             patch.object(driver, "verify_capture") as verify,
         ):
             driver.click(self.frame, target)
         verify.assert_called_once_with(self.surface)
-        uia.Click.assert_called_once_with(45, 330, waitTime=0.1)
+        driver.device.touch.assert_called_once_with((40, 322), duration=0.1)
 
     def test_click_rejects_old_frame_or_wrong_frame_id(self):
         driver = WindowsDriver()
@@ -93,8 +92,9 @@ class RoutingTests(unittest.TestCase):
             score=1,
             method="template",
         )
-        uia = MagicMock()
-        with patch.dict(sys.modules, {"uiautomation": uia}):
+        driver.device = MagicMock()
+        driver.device.get_pos.return_value = (5, 8)
+        with patch.object(driver, "verify_capture") as verify:
             with self.assertRaisesRegex(RuntimeError, "不属于"):
                 driver.click(self.frame, target)
             target = target.model_copy(update={"frame_id": "frame"})
@@ -103,7 +103,8 @@ class RoutingTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(RuntimeError, "过期"):
                 driver.click(old, target)
-        uia.Click.assert_not_called()
+        driver.device.touch.assert_not_called()
+        verify.assert_not_called()
 
     def make_router(self, already_open=False, found=True):
         driver = MagicMock()

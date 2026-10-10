@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -23,7 +24,8 @@ class WindowsScreenshotTests(unittest.TestCase):
         with (
             patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.screenshot.ImageGrab.grab", return_value=image
+                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                return_value=image,
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, "几乎全黑"):
@@ -34,7 +36,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         self,
     ):
         driver = WindowsDriver()
-        driver.window = MagicMock()
+        driver.device = MagicMock()
         driver.user32 = MagicMock()
         driver.user32.GetForegroundWindow.return_value = 123
         metrics = {76: -200, 77: 0, 78: 1200, 79: 800}
@@ -44,11 +46,11 @@ class WindowsScreenshotTests(unittest.TestCase):
             patch("wemo2_collector.windows.driver.time.sleep"),
         ):
             self.assertEqual(driver.prepare_capture(), self.surface)
-        driver.window.SetActive.assert_called_once()
+        driver.device.set_foreground.assert_called_once()
 
     def test_prepare_capture_rejects_window_outside_virtual_screen(self):
         driver = WindowsDriver()
-        driver.window = MagicMock()
+        driver.device = MagicMock()
         driver.user32 = MagicMock()
         driver.user32.GetForegroundWindow.return_value = 123
         metrics = {76: 0, 77: 0, 78: 1000, 79: 800}
@@ -93,7 +95,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         user32.ClientToScreen.side_effect = client_to_screen
         driver = WindowsDriver()
         driver.user32 = user32
-        driver.window = SimpleNamespace(NativeWindowHandle=123)
+        driver.device = SimpleNamespace(handle=123)
         surface = driver.current_surface()
         self.assertEqual(surface.bounds, Rect(x=-92, y=81, width=80, height=60))
         self.assertEqual(surface.scale, 1.5)
@@ -131,16 +133,14 @@ class WindowsScreenshotTests(unittest.TestCase):
         frames = []
         with (
             patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
-            patch("wemo2_collector.windows.screenshot.ImageGrab.grab") as grab,
+            patch(
+                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image"
+            ) as grab,
         ):
             for _ in range(2):
                 grab.return_value = Image.new("RGB", (80, 60), "white")
                 frames.append(screenshotter.capture(self.surface))
-            grab.assert_called_with(
-                bbox=(-100, 50, -20, 110),
-                all_screens=True,
-                include_layered_windows=True,
-            )
+            grab.assert_called_with(self.surface)
         self.assertNotEqual(frames[0].image_path, frames[1].image_path)
         with Image.open(frames[0].image_path) as image:
             self.assertEqual(image.size, (80, 60))
@@ -155,7 +155,7 @@ class WindowsScreenshotTests(unittest.TestCase):
                 self.subTest(size=size, color=color),
                 patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
                 patch(
-                    "wemo2_collector.windows.screenshot.ImageGrab.grab",
+                    "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
                     return_value=Image.new("RGB", size, color),
                 ),
             ):
@@ -185,7 +185,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             patch("wemo2_collector.windows.driver.WindowsDriver.verify_capture"),
             patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.screenshot.ImageGrab.grab",
+                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
                 return_value=Image.new("RGB", (80, 60), "white"),
             ),
         ):
@@ -204,7 +204,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         driver.prepare_capture.return_value = self.surface
         coordinator.collector.driver = driver
         with patch(
-            "wemo2_collector.windows.screenshot.ImageGrab.grab",
+            "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
             side_effect=OSError("capture failed"),
         ):
             with self.assertRaises((RuntimeError, OSError)):
@@ -214,10 +214,10 @@ class WindowsScreenshotTests(unittest.TestCase):
         coordinator.store.close()
 
     def test_driver_reports_missing_and_ambiguous_wechat_windows(self):
-        window = SimpleNamespace(Name="微信", NativeWindowHandle=123, ProcessId=42)
+        window = SimpleNamespace(handle=123, process_id=42)
         for windows, message in (([], "未找到"), ([window, window], "多个")):
-            uia = MagicMock()
-            uia.GetRootControl.return_value.GetChildren.return_value = windows
+            findwindows = MagicMock()
+            findwindows.find_elements.return_value = windows
             psutil = MagicMock()
             psutil.Error = RuntimeError
             psutil.Process.return_value.name.return_value = "Weixin.exe"
@@ -225,7 +225,13 @@ class WindowsScreenshotTests(unittest.TestCase):
             user32.SetThreadDpiAwarenessContext.return_value = 1
             with (
                 self.subTest(message=message),
-                patch.dict("sys.modules", {"uiautomation": uia, "psutil": psutil}),
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "pywinauto": SimpleNamespace(findwindows=findwindows),
+                        "psutil": psutil,
+                    },
+                ),
                 patch("wemo2_collector.windows.driver.sys.platform", "win32"),
                 patch(
                     "wemo2_collector.windows.driver.ctypes.WinDLL",
@@ -239,12 +245,12 @@ class WindowsScreenshotTests(unittest.TestCase):
                         driver.attach()
                 finally:
                     driver.close()
-                uia.UIAutomationInitializerInThread.return_value.__exit__.assert_called_once()
+                user32.SetThreadDpiAwarenessContext.assert_any_call(1)
 
     def test_driver_does_not_accept_unrelated_process_with_same_title(self):
-        uia = MagicMock()
-        uia.GetRootControl.return_value.GetChildren.return_value = [
-            SimpleNamespace(Name="微信", NativeWindowHandle=123, ProcessId=42)
+        findwindows = MagicMock()
+        findwindows.find_elements.return_value = [
+            SimpleNamespace(handle=123, process_id=42)
         ]
         psutil = MagicMock()
         psutil.Error = RuntimeError
@@ -252,7 +258,13 @@ class WindowsScreenshotTests(unittest.TestCase):
         user32 = MagicMock()
         user32.SetThreadDpiAwarenessContext.return_value = 1
         with (
-            patch.dict("sys.modules", {"uiautomation": uia, "psutil": psutil}),
+            patch.dict(
+                "sys.modules",
+                {
+                    "pywinauto": SimpleNamespace(findwindows=findwindows),
+                    "psutil": psutil,
+                },
+            ),
             patch("wemo2_collector.windows.driver.sys.platform", "win32"),
             patch(
                 "wemo2_collector.windows.driver.ctypes.WinDLL",
@@ -266,3 +278,92 @@ class WindowsScreenshotTests(unittest.TestCase):
                     driver.attach()
             finally:
                 driver.close()
+
+    def test_airtest_desktop_crop_preserves_negative_origin_and_rgb_colors(self):
+        device = MagicMock()
+        device.screen.monitors = [
+            {"left": -120, "top": 40, "width": 120, "height": 100}
+        ]
+        pixels = np.zeros((100, 120, 3), dtype=np.uint8)
+        pixels[10, 20] = (11, 22, 33)
+        device.snapshot.return_value = pixels
+        with patch(
+            "wemo2_collector.windows.screenshot.create_device", return_value=device
+        ):
+            image = WindowsScreenshotter(self.path)._capture_image(self.surface)
+        try:
+            self.assertEqual(image.size, (80, 60))
+            self.assertEqual(image.getpixel((0, 0)), (33, 22, 11))
+        finally:
+            image.close()
+        device.snapshot.assert_called_once_with()
+        device.screen.close.assert_called_once()
+
+    def test_airtest_invalid_desktop_frames_release_resources(self):
+        for pixels in (
+            None,
+            np.zeros((100, 120), dtype=np.uint8),
+            np.zeros((50, 120, 3), dtype=np.uint8),
+        ):
+            device = MagicMock()
+            device.screen.monitors = [
+                {"left": -120, "top": 40, "width": 120, "height": 100}
+            ]
+            device.snapshot.return_value = pixels
+            with patch(
+                "wemo2_collector.windows.screenshot.create_device", return_value=device
+            ):
+                with self.assertRaises(RuntimeError):
+                    WindowsScreenshotter(self.path)._capture_image(self.surface)
+            device.screen.close.assert_called_once()
+
+    def test_airtest_capture_error_releases_desktop_device(self):
+        device = MagicMock()
+        device.snapshot.side_effect = OSError("capture failed")
+        with patch(
+            "wemo2_collector.windows.screenshot.create_device", return_value=device
+        ):
+            with self.assertRaises(OSError):
+                WindowsScreenshotter(self.path)._capture_image(self.surface)
+        device.screen.close.assert_called_once()
+
+    def test_driver_connects_only_configured_wechat_process_through_airtest(self):
+        findwindows = MagicMock()
+        findwindows.find_elements.return_value = [
+            SimpleNamespace(handle=111, process_id=10),
+            SimpleNamespace(handle=123, process_id=42),
+        ]
+        psutil = MagicMock()
+        psutil.Error = RuntimeError
+        psutil.Process.return_value.name.return_value = "Weixin.exe"
+        user32 = MagicMock()
+        user32.SetThreadDpiAwarenessContext.return_value = 1
+        device = MagicMock()
+        with (
+            patch.dict(
+                "sys.modules",
+                {
+                    "pywinauto": SimpleNamespace(findwindows=findwindows),
+                    "psutil": psutil,
+                },
+            ),
+            patch("wemo2_collector.windows.driver.sys.platform", "win32"),
+            patch(
+                "wemo2_collector.windows.driver.ctypes.WinDLL",
+                return_value=user32,
+                create=True,
+            ),
+            patch(
+                "wemo2_collector.windows.backend.create_device", return_value=device
+            ) as create,
+        ):
+            driver = WindowsDriver(process_id=42)
+            with patch.object(driver, "current_surface", return_value=self.surface):
+                self.assertEqual(driver.attach(), self.surface)
+            create.assert_called_once_with(handle=123, foreground=False)
+            psutil.Process.assert_called_once_with(42)
+            driver.close()
+            driver.close()
+        device.screen.close.assert_called_once()
+        device.stop_app.assert_not_called()
+        user32.SetThreadDpiAwarenessContext.assert_any_call(1)

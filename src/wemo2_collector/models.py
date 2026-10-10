@@ -69,7 +69,7 @@ class LocatedTarget(BaseModel):
 
 
 class TextBlock(BaseModel):
-    """OCR/UIA 的可见文字块；不直接等同于一条朋友圈动态。"""
+    """文字识别器输出的可见文字块；不直接等同于一条朋友圈动态。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     frame_id: str

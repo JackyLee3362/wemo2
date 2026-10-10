@@ -1,4 +1,4 @@
-"""连接微信窗口并在截图前置于前台，不点击或输入内容。"""
+"""使用 Airtest 连接微信窗口，验证客户区并执行导航点击。"""
 
 import ctypes
 import sys
@@ -14,17 +14,18 @@ class WindowsDriver(BaseDriver):
     def __init__(self, window_title: str = "微信", process_id: int | None = None):
         self.window_title = window_title
         self.process_id = process_id
-        self.window = None
+        self.device = None
         self.user32 = None
-        self.initializer = None
         self.previous_dpi = None
 
     def attach(self) -> Surface:
         if sys.platform != "win32":
             raise RuntimeError("Windows 截图仅支持 Windows 主机")
-        # Windows 专属模块在连接时加载，help/version 不初始化 UI Automation。
+        # Windows 专属模块延迟加载，help/version 不连接窗口。
         import psutil
-        import uiautomation as uia
+        from pywinauto import findwindows
+
+        from wemo2_collector.windows.backend import create_device
 
         self.user32 = ctypes.WinDLL("user32", use_last_error=True)
         self.user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
@@ -48,18 +49,15 @@ class WindowsDriver(BaseDriver):
         self.user32.GetDpiForWindow.argtypes = [wintypes.HWND]
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-        self.initializer = uia.UIAutomationInitializerInThread()
-        self.initializer.__enter__()
         matches = []
-        for window in uia.GetRootControl().GetChildren():
-            if window.Name != self.window_title or not window.NativeWindowHandle:
-                continue
-            if not self.user32.IsWindowVisible(window.NativeWindowHandle):
-                continue
-            if self.process_id is not None and window.ProcessId != self.process_id:
+        windows = findwindows.find_elements(
+            title=self.window_title, visible_only=True, backend="win32"
+        )
+        for window in windows:
+            if self.process_id is not None and window.process_id != self.process_id:
                 continue
             try:
-                process_name = psutil.Process(window.ProcessId).name().lower()
+                process_name = psutil.Process(window.process_id).name().lower()
             except psutil.Error:
                 continue
             if process_name in ("wechat.exe", "weixin.exe"):
@@ -70,13 +68,13 @@ class WindowsDriver(BaseDriver):
             raise RuntimeError(
                 "找到多个微信窗口，请通过 window_process_id 指定目标进程"
             )
-        self.window = matches[0]
+        self.device = create_device(handle=matches[0].handle, foreground=False)
         return self.current_surface()
 
     def current_surface(self) -> Surface:
-        if self.window is None or self.user32 is None:
+        if self.device is None or self.user32 is None:
             raise RuntimeError("微信窗口尚未连接")
-        handle = self.window.NativeWindowHandle
+        handle = self.device.handle
         if not self.user32.IsWindow(handle) or not self.user32.IsWindowVisible(handle):
             raise RuntimeError("微信窗口已经关闭或不可见")
         if self.user32.IsIconic(handle):
@@ -106,7 +104,7 @@ class WindowsDriver(BaseDriver):
     def prepare_capture(self) -> Surface:
         """切到前台并确认整个客户区在显示器范围内，避免截到编辑器或空白区域。"""
         surface = self.current_surface()
-        self.window.SetActive()
+        self.device.set_foreground()
         for _ in range(10):
             if self.user32.GetForegroundWindow() == int(surface.surface_id):
                 break
@@ -155,42 +153,21 @@ class WindowsDriver(BaseDriver):
         self.verify_capture(frame.surface)
         x = frame.surface.bounds.x + bounds.x + bounds.width // 2
         y = frame.surface.bounds.y + bounds.y + bounds.height // 2
-        import uiautomation as uia
-
-        uia.Click(x, y, waitTime=0.1)
-
-    def switch_to_window(self, title: str) -> bool:
-        """仅在已连接微信进程内寻找路由目标窗口，不重新初始化会话。"""
-        if self.window is None:
-            raise RuntimeError("微信窗口尚未连接")
-        import uiautomation as uia
-
-        process_id = self.window.ProcessId
-        matches = []
-        for window in uia.GetRootControl().GetChildren():
-            if window.Name != title or window.ProcessId != process_id:
-                continue
-            if window.NativeWindowHandle and self.user32.IsWindowVisible(
-                window.NativeWindowHandle
-            ):
-                matches.append(window)
-        if not matches:
-            return False
-        if len(matches) != 1:
-            raise RuntimeError(f"微信进程中有多个“{title}”窗口，不能确定路由目标")
-        self.window = matches[0]
-        return True
+        # Airtest 的窗口点击坐标相对外框；我们的定位结果相对客户区。
+        # DPI 感知已设为物理像素，Airtest dpifactor 保持 1，避免重复缩放。
+        left, top = self.device.get_pos()
+        self.device.touch((x - left, y - top), duration=0.1)
 
     def scroll(self, surface: Surface, distance: int) -> None:
         raise NotImplementedError("当前阶段只支持截图，不执行滚动")
 
     def close(self) -> None:
+        """只释放截图资源并恢复线程 DPI，不退出微信。"""
         try:
-            if self.initializer is not None:
-                self.initializer.__exit__(None, None, None)
-                self.initializer = None
+            if self.device is not None:
+                self.device.screen.close()
         finally:
+            self.device = None
             if self.previous_dpi is not None:
                 self.user32.SetThreadDpiAwarenessContext(self.previous_dpi)
                 self.previous_dpi = None
-            self.window = None

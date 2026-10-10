@@ -218,3 +218,18 @@ uv run ruff check .
 uv run ruff format . --check
 uv run python -m unittest discover -s tests -v
 ```
+
+## Windows 自动化后端
+
+Windows 截图与导航使用 Airtest，已移除 uiautomation。执行 `uv sync` 安装依赖后，
+可以继续使用 VS Code 中的截图、朋友圈入口调试配置，或运行：
+
+```powershell
+uv run python -m wemo2_collector.main
+uv run python -m wemo2_collector.moments_main
+```
+
+截图保存在 `data/screenshot`，包括客户区 PNG 和 JSON 元数据。窗口需要可见且无遮挡。
+当前入口路由验证的是发现菜单，尚未读取朋友圈动态。原有 TOML 配置无需修改。
+Airtest 当前依赖 NumPy 1.x 与 OpenCV contrib 4.6，不再同时安装 opencv-python-headless。
+模板定位继续通过独立 Locator 实现，皮肤兼容仍需维护模板；Android 适配留待后续实现。

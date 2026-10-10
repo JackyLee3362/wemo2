@@ -1,8 +1,9 @@
 # wemo2_collector 界面采集架构
 
 状态：已实现 Windows 只读窗口连接与截图，注册名为 `windows_screenshot`。
-UIA 定位标题匹配且进程属于微信的唯一窗口，截图前切到前台，Pillow 按客户区物理坐标
-截取屏幕可见内容，保存 PNG 及 JSON 元数据。旧 HWND/GDI 路径已移除，以处理近乎全黑结果。
+使用 Airtest 的 Windows 设备连接标题匹配且进程属于微信的唯一窗口；窗口枚举使用其底层
+pywinauto Win32 后端，不依赖 UI Automation 控件树。截图前切到前台，Airtest 获取虚拟桌面，
+再按客户区物理坐标裁切，保存 PNG 及 JSON 元数据。完整桌面只在内存中存在，不写入磁盘。
 该方式要求窗口无遮挡；前台检查不能完全排除置顶悬浮窗、通知或同进程弹窗的遮挡。
 已实现首版指南针入口模板定位和发现页面截图验证；尚未实现 EasyOCR 识别和朋友圈卡片解析。
 `locating.py` 将用户参考截图的指南针图标作为模板，在左侧栏按 DPI 缩放匹配；
@@ -22,8 +23,8 @@ UIA 定位标题匹配且进程属于微信的唯一窗口，截图前切到前�
 
 本设计采用以下能力组合：
 
-- [uiautomation](https://github.com/yinkaisheng/Python-UIAutomation-for-Windows)：Windows 窗口与可访问控件操作。其能力依赖应用是否提供 UI Automation Provider；先探测实际能力，再决定是否使用控件定位。
-- [Pillow ImageGrab](https://pillow.readthedocs.io/en/stable/reference/ImageGrab.html)：获取窗口区域的截图。截图是否被遮挡、最小化或裁切需要实现侧验证。
+- [Airtest](https://github.com/AirtestProject/Airtest)：Windows 窗口连接、前台激活、截图和点击；直接使用独立设备实例，不依赖全局当前设备或 AirtestIDE。未来 Android 可复用其设备能力，但页面布局与模板仍需单独适配。
+- Pillow：将 Airtest 返回的 BGR 数组转成 RGB 图片并保存。Win32 API 仅用于客户区、DPI、焦点与可见性校验。
 - [OpenCV 模板匹配](https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html)：定位预先准备的图标模板，保留匹配分数；模板大小、主题和缩放变化需要配置及验证。
 - [EasyOCR](https://github.com/JaidedAI/EasyOCR)：读取图片中的文字及位置、置信度，首版计划用中文和英文、CPU 模式；Reader 初始化复用，不在每屏重复加载模型。
 
@@ -51,7 +52,7 @@ flowchart TD
 | --- | --- | --- |
 | PlatformDriver | 配置 → Surface；点击/滚动请求 → 操作结果 | 连接窗口或设备，执行所有平台动作，验证坐标及当前目标 |
 | Screenshotter | Surface → Screenshot | 获取并保存目标区域图片，记录窗口位置、尺寸、帧 ID 和时间 |
-| Locator | Screenshot + 目标名 → LocatedTarget 或 None | 在当前帧内定位，不直接执行点击；可组合 UIA、模板和 OCR |
+| Locator | Screenshot + 目标名 → LocatedTarget 或 None | 在当前帧内定位，不直接执行点击；可组合模板和 OCR |
 | TextRecognizer | Screenshot → TextBlock 列表 | 输出原始文本、局部坐标和置信度，不猜测动态结构 |
 | PageRouter | 页面目标 → 验证后的 Screenshot | 判断页面、寻找目标、调用驱动并验证跳转结果；有超时和重试上限 |
 | MomentReader | 已确认的朋友圈 Screenshot → Observation 列表 | 卡片分割、字段关联、完整度判断及证据附加 |
@@ -77,9 +78,9 @@ src/wemo2_collector/
 ```text
     collector.py       # UiCollector(BaseCollector)，平台与页面流程编排
     routing.py         # 页面状态判定与路由定义
-    locating.py        # UIA/模板/OCR 定位的组合策略
+    locating.py        # 模板/OCR 定位的组合策略
     recognition.py     # OCR 结果标准化与朋友圈卡片读取
-    windows/           # WindowsDriver、WindowsScreenshotter
+    windows/           # Airtest 后端、WindowsDriver、WindowsScreenshotter
     android/           # 后续 AndroidDriver、AndroidScreenshotter
     profiles/          # 微信版本、主题、DPI 对应的页面标志及模板
 ```
@@ -146,9 +147,14 @@ Windows 驱动在连接前处理 DPI 感知；若识别侧缩放了图片，返�
 
 动作必须验证：目标 `frame_id`、窗口/设备标识、当前区域位置与尺寸、目标是否在截图内。
 窗口移动、滚动、旋转或缩放后旧帧不能继续点击；重新截图定位。局部裁切还须保留父帧偏移。
-UIA 返回的控件坐标也要归一到这个契约，不能与模板坐标混用。
+Airtest 的窗口点击坐标相对窗口外框；驱动将客户区局部坐标转换后再调用 touch。
+线程采用物理像素 DPI 感知，Airtest dpifactor 保持 1，避免重复缩放。
+截图使用未绑定窗口的独立设备，按虚拟桌面原点裁切，兼容负屏幕坐标。
+设备的 screen.close() 只释放资源；禁止使用 stop_app/kill 结束用户微信。
 
-首版定位顺序建议：可访问控件 → 模板 → OCR，并由目标 profile 配置允许的方法。
+当前定位继续使用 OpenCV 的限定区域、多尺度模板匹配，保留分数与多目标拒绝。
+Airtest 自动化后端与定位器分离，后续可通过 BaseLocator 接入 Airtest 图片匹配或 OCR。
+更换后端不会自动兼容浅色、深色或新皮肤，仍需维护页面模板及主题策略。
 不满足阈值、目标不唯一或识别结果不确定时返回失败，不用低分最高匹配强行点击。
 OCR 只提供文字块；朋友圈卡片的作者、正文、时间、图片顺序需要 MomentReader 按布局关联。
 首版只提取可见作者名称、正文和时间原文，媒体及评论缺失标记 partial/unknown。
@@ -191,3 +197,11 @@ DPI、窗口移动、主题与微信版本；不能用纯模拟测试宣称真�
 截图可能包含私人内容，证据写入本地受控目录，日志只记录帧 ID、区域和状态，不打印正文。
 截图保留期与最终媒体备份分别管理。OCR 模型下载及 Windows 专属依赖仅在用户选择 UI 实现时启用，
 现有 CLI 的 help、version、JSON 和 pseudo 流程不应因此加载模型或连接窗口。
+
+## 9. Airtest 依赖与日志
+
+通过 uv 安装 Airtest；当前解析版本为 1.4.3，依赖 NumPy < 2 和
+OpenCV contrib <= 4.6.0.66，因此移除独立的 opencv-python-headless，避免两个包覆盖同一个 cv2。
+Airtest 及平台模块延迟加载；其标准 logging 日志转入 Loguru，使用应用已有文件 sink。
+原有 windows_screenshot 注册名、TOML 配置和 VS Code 调试入口保持可用。
+Android 仍未实现，选择该平台明确报错。

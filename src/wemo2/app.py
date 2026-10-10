@@ -10,7 +10,9 @@ from wemo2.models import RunResult
 
 
 def import_json(path: str, database: str) -> RunResult:
-    coordinator = build_coordinator("json", "stable", "sqlite", json_path=path, database=database)
+    coordinator = build_coordinator(
+        "json", "stable", "sqlite", json_path=path, database=database
+    )
     with coordinator.store:
         return coordinator.run()
 
@@ -24,8 +26,11 @@ def run_demo() -> RunResult:
 def run_config(config: AppConfig) -> RunResult:
     """使用合并后的配置组装组件并执行一次流程。"""
     coordinator = build_coordinator(
-        config.collector, config.deduplicator, config.store,
-        json_path=config.json_path, database=config.database,
+        config.collector,
+        config.deduplicator,
+        config.store,
+        json_path=config.json_path,
+        database=config.database,
     )
     with coordinator.store:
         return coordinator.run()

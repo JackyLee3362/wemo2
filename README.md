@@ -22,6 +22,10 @@ uv run wemo2
 
 ## 最小采集流程
 
+VS Code 调试入口为项目根目录的 `main.py`。先执行 `uv sync`，安装 VS Code 的
+Python 和 Python Debugger 扩展，再按 F5 选择“wemo2: 调试 CLI”。配置使用项目
+`.venv` 中的 Windows Python；可修改 `.vscode/launch.json` 的 `args` 传入命令行选项。
+
 先运行完全由模拟组件组成的流程，无需文件、微信或数据库：
 
 ```powershell
@@ -106,3 +110,16 @@ JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。�
 以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。
 `--log-level` 可覆盖日志级别。配置模型与加载逻辑位于 `src/wemo2/config.py`，
 Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。
+
+## 开发检查
+
+编码规范见 [AGENTS.md](AGENTS.md)。Ruff 作为开发依赖随 `uv sync` 安装，负责
+Python 静态检查、import 排序和格式化：
+
+```powershell
+uv run ruff check . --fix
+uv run ruff format .
+uv run ruff check .
+uv run ruff format . --check
+uv run python -m unittest discover -s tests -v
+```

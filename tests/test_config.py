@@ -1,7 +1,7 @@
-from pathlib import Path
 import json
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from pydantic import ValidationError
@@ -37,7 +37,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.database, self.cwd / "data/wemo2.sqlite3")
 
     def test_priority_and_explicit_default_value(self):
-        self.write_config('store = "sqlite"\ndeduplicator = "stable"\nlog_level = "DEBUG"\n')
+        self.write_config(
+            'store = "sqlite"\ndeduplicator = "stable"\nlog_level = "DEBUG"\n'
+        )
         config = load_config({"store": "pseudo", "log_level": "INFO"}, cwd=self.cwd)
         self.assertEqual(config.store, "pseudo")
         self.assertEqual(config.log_level, "INFO")
@@ -45,8 +47,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.collector, "pseudo")
 
     def test_file_and_cli_paths_have_distinct_base_directories(self):
-        path = self.write_config('database = "saved.sqlite3"\njson_path = "input.json"\n',
-                                 self.cwd / "settings/custom.toml")
+        path = self.write_config(
+            'database = "saved.sqlite3"\njson_path = "input.json"\n',
+            self.cwd / "settings/custom.toml",
+        )
         config = load_config({"database": "override.sqlite3"}, path, cwd=self.cwd)
         self.assertEqual(config.database, self.cwd / "override.sqlite3")
         self.assertEqual(config.json_path, self.cwd / "settings/input.json")
@@ -64,7 +68,9 @@ class ConfigTests(unittest.TestCase):
         self.write_config('collector = "json"\njson_path = "input.json"\n')
         config = load_config(cwd=self.cwd)
         self.assertEqual((config.deduplicator, config.store), ("stable", "sqlite"))
-        self.write_config('collector = "json"\njson_path = "input.json"\nstore = "pseudo"\n')
+        self.write_config(
+            'collector = "json"\njson_path = "input.json"\nstore = "pseudo"\n'
+        )
         self.assertEqual(load_config(cwd=self.cwd).store, "pseudo")
 
     def test_typer_omitted_values_do_not_overwrite_file(self):
@@ -81,13 +87,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.json_path, self.cwd / "records.json")
 
     def test_invalid_cli_input_exits_before_execution(self):
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd), patch("wemo2.app.launch") as application:
+        with (
+            patch("wemo2.config.Path.cwd", return_value=self.cwd),
+            patch("wemo2.app.launch") as application,
+        ):
             result = CliRunner().invoke(cli, ["--collector", "json"])
         self.assertEqual(result.exit_code, 2)
         application.assert_not_called()
 
     def test_cli_config_runs_selected_store(self):
-        self.write_config('store = "sqlite"\ndeduplicator = "stable"\ndatabase = "backup.sqlite3"\n')
+        self.write_config(
+            'store = "sqlite"\ndeduplicator = "stable"\ndatabase = "backup.sqlite3"\n'
+        )
         config = load_config(cwd=self.cwd)
         self.assertEqual(run_config(config).created, 2)
         self.assertTrue(config.database.exists())
@@ -97,19 +108,32 @@ class ConfigTests(unittest.TestCase):
         with patch("wemo2.config.Path.cwd", return_value=self.cwd):
             result = CliRunner().invoke(cli, [])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(json.loads(result.stdout), {
-            "collected": 3, "created": 2, "merged": 0, "unchanged": 1,
-        })
+        self.assertEqual(
+            json.loads(result.stdout),
+            {
+                "collected": 3,
+                "created": 2,
+                "merged": 0,
+                "unchanged": 1,
+            },
+        )
 
     def test_execution_failure_exits_one_without_success_result(self):
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd), patch("wemo2.app.run_config", side_effect=RuntimeError("failed")):
+        with (
+            patch("wemo2.config.Path.cwd", return_value=self.cwd),
+            patch("wemo2.app.run_config", side_effect=RuntimeError("failed")),
+        ):
             result = CliRunner().invoke(cli, [])
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(result.stdout, "")
 
     def test_help_and_version_do_not_load_config_or_launch(self):
         for option in ("--help", "--version"):
-            with self.subTest(option=option), patch("wemo2.cli.load_config") as loader, patch("wemo2.app.launch") as application:
+            with (
+                self.subTest(option=option),
+                patch("wemo2.cli.load_config") as loader,
+                patch("wemo2.app.launch") as application,
+            ):
                 result = CliRunner().invoke(cli, [option])
                 self.assertEqual(result.exit_code, 0, result.output)
                 self.assertIn("wemo2", result.output)
@@ -117,7 +141,10 @@ class ConfigTests(unittest.TestCase):
                 application.assert_not_called()
 
     def test_typer_rejects_unknown_choice_and_conflicting_options(self):
-        for args in (["--store", "invalid"], ["--collector", "pseudo", "--import-json", "input.json"]):
+        for args in (
+            ["--store", "invalid"],
+            ["--collector", "pseudo", "--import-json", "input.json"],
+        ):
             with self.subTest(args=args), patch("wemo2.app.launch") as application:
                 result = CliRunner().invoke(cli, args)
                 self.assertEqual(result.exit_code, 2)

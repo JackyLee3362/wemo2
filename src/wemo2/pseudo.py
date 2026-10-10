@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from wemo2.deduplicator import canonical_json
@@ -27,7 +27,7 @@ class PseudoCollector(BaseCollector):
                 observation_id="pseudo-obs-001",
                 account_scope="pseudo-account",
                 collector_id="pseudo",
-                observed_at=datetime(2026, 10, 10, 13, tzinfo=timezone.utc),
+                observed_at=datetime(2026, 10, 10, 13, tzinfo=UTC),
                 source=Source(
                     native_post_id="pseudo-post-001",
                     native_id_namespace="pseudo-account",

@@ -19,7 +19,9 @@ class BaseStore(ABC):
         """包裹匹配与保存，失败时回滚当前记录的写入。"""
 
     @abstractmethod
-    def get_observation(self, scope: str, observation_id: str) -> SavedObservation | None:
+    def get_observation(
+        self, scope: str, observation_id: str
+    ) -> SavedObservation | None:
         """按账号和采集记录 ID 查询幂等索引。"""
 
     @abstractmethod

@@ -26,7 +26,9 @@ class Deduplicator(BaseDeduplicator):
         previous = index.get_observation(scope, observation.observation_id)
         if previous is not None:
             # 兼容旧数据库中的时间字符串格式。
-            if canonical_json(Observation.model_validate_json(previous.payload)) != canonical_json(observation):
+            if canonical_json(
+                Observation.model_validate_json(previous.payload)
+            ) != canonical_json(observation):
                 raise ValueError(
                     "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
                 )
@@ -45,4 +47,6 @@ class Deduplicator(BaseDeduplicator):
         existing = index.find_post(scope, identity) if identity is not None else None
         if existing is None:
             return Decision(action="created", identity_key=identity)
-        return Decision(action="merged", post_id=existing.post_id, identity_key=identity)
+        return Decision(
+            action="merged", post_id=existing.post_id, identity_key=identity
+        )

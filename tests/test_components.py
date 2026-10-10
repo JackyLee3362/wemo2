@@ -1,7 +1,7 @@
-from itertools import product
-from pathlib import Path
 import tempfile
 import unittest
+from itertools import product
+from pathlib import Path
 
 from wemo2.composition import build_coordinator
 from wemo2.coordinator import Coordinator
@@ -19,9 +19,15 @@ class ComponentTests(unittest.TestCase):
     def test_pseudo_pipeline_and_repeat_run(self):
         coordinator = build_coordinator()
         result = coordinator.run()
-        self.assertEqual(result.model_dump(), {
-            "collected": 3, "created": 2, "merged": 0, "unchanged": 1,
-        })
+        self.assertEqual(
+            result.model_dump(),
+            {
+                "collected": 3,
+                "created": 2,
+                "merged": 0,
+                "unchanged": 1,
+            },
+        )
         self.assertEqual(len(coordinator.store.list_posts()), 2)
         self.assertEqual(coordinator.run().unchanged, 3)
 
@@ -30,11 +36,17 @@ class ComponentTests(unittest.TestCase):
             for collector, deduplicator, store in product(
                 ("pseudo", "json"), ("pseudo", "stable"), ("pseudo", "sqlite")
             ):
-                with self.subTest(collector=collector, deduplicator=deduplicator, store=store):
+                with self.subTest(
+                    collector=collector, deduplicator=deduplicator, store=store
+                ):
                     coordinator = build_coordinator(
-                        collector, deduplicator, store,
-                        json_path=Path(__file__).parents[1] / "examples/observations.json",
-                        database=Path(directory) / f"{collector}-{deduplicator}.sqlite3",
+                        collector,
+                        deduplicator,
+                        store,
+                        json_path=Path(__file__).parents[1]
+                        / "examples/observations.json",
+                        database=Path(directory)
+                        / f"{collector}-{deduplicator}.sqlite3",
                     )
                     with coordinator.store:
                         result = coordinator.run()
@@ -49,7 +61,9 @@ class ComponentTests(unittest.TestCase):
         updated.observation_id = "updated"
         updated.content.text = "更新后的正文"
         store = PseudoStore()
-        result = Coordinator(PseudoCollector([first, updated]), Deduplicator(), store).run()
+        result = Coordinator(
+            PseudoCollector([first, updated]), Deduplicator(), store
+        ).run()
         self.assertEqual(result.merged, 1)
         self.assertEqual(store.list_posts()[0].revision, 2)
         self.assertEqual(store.list_posts()[0].content.text, "更新后的正文")

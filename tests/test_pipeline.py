@@ -9,8 +9,8 @@ from pydantic import ValidationError
 from wemo2.collector import JsonCollector
 from wemo2.coordinator import Coordinator
 from wemo2.deduplicator import Deduplicator
-from wemo2.models import Observation
 from wemo2.interfaces import BaseCollector
+from wemo2.models import Observation
 from wemo2.store import SQLiteStore
 
 
@@ -58,8 +58,10 @@ class PipelineTests(unittest.TestCase):
             saved = store.get_observation(
                 self.record["account_scope"], self.record["observation_id"]
             )
-            self.assertEqual(Observation.model_validate_json(saved.payload),
-                             Observation.model_validate(self.record))
+            self.assertEqual(
+                Observation.model_validate_json(saved.payload),
+                Observation.model_validate(self.record),
+            )
 
     def test_partial_observation_does_not_clear_complete_content(self):
         self.run_records([self.record])
@@ -68,9 +70,7 @@ class PipelineTests(unittest.TestCase):
         partial["content"]["text"] = ""
         partial["field_status"]["text"] = "partial"
         self.assertEqual(self.run_records([partial]).unchanged, 1)
-        self.assertEqual(
-            self.posts()[0].content.text, self.record["content"]["text"]
-        )
+        self.assertEqual(self.posts()[0].content.text, self.record["content"]["text"])
 
     def test_idempotency_conflict_does_not_corrupt_store(self):
         self.run_records([self.record])
@@ -114,8 +114,11 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(dumped["content"]["media"], [])
 
     def test_model_rejects_invalid_nested_fields_and_naive_time(self):
-        for field, value in (("observed_at", "2026-10-10T13:00:00"),
-                             ("observation_id", "  "), ("schema_version", "9.0.0")):
+        for field, value in (
+            ("observed_at", "2026-10-10T13:00:00"),
+            ("observation_id", "  "),
+            ("schema_version", "9.0.0"),
+        ):
             invalid = copy.deepcopy(self.record)
             invalid[field] = value
             with self.subTest(field=field), self.assertRaises(ValidationError):
@@ -144,8 +147,9 @@ class PipelineTests(unittest.TestCase):
         self.run_records([self.record])
         with SQLiteStore(self.path / "backup.sqlite3") as store:
             with store.transaction():
-                store.connection.execute("UPDATE observations SET payload=?",
-                                         (json.dumps(self.record),))
+                store.connection.execute(
+                    "UPDATE observations SET payload=?", (json.dumps(self.record),)
+                )
         self.assertEqual(self.run_records([self.record]).unchanged, 1)
 
 

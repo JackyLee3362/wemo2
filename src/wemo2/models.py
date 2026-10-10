@@ -23,6 +23,7 @@ Action = Literal["created", "merged", "unchanged"]
 
 class DataModel(BaseModel):
     """采集数据基类：允许 JSON 扩展字段，并校验赋值及非有限数值。"""
+
     model_config = ConfigDict(
         extra="allow", validate_assignment=True, allow_inf_nan=False
     )
@@ -77,7 +78,9 @@ class Media(DataModel):
     source_ref: str | None = None
     rendition: str | None = None  # 如 thumbnail/original，不能将缩略图冒充原图。
     mime_type: str | None = None
-    sha256: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")  # 实际字节哈希。
+    sha256: str | None = Field(
+        default=None, pattern=r"^[a-fA-F0-9]{64}$"
+    )  # 实际字节哈希。
 
 
 class Comment(DataModel):
@@ -125,8 +128,12 @@ class Observation(DataModel):
     observed_at: AwareDatetime  # 采集时间，与动态发布时间不同，必须含时区。
     source: Source
     content: Content
-    field_status: dict[str, FieldStatus] = Field(default_factory=dict)  # 顶层内容字段完整度。
-    evidence: list[dict[str, JsonValue]] = Field(default_factory=list)  # 截图等证据引用。
+    field_status: dict[str, FieldStatus] = Field(
+        default_factory=dict
+    )  # 顶层内容字段完整度。
+    evidence: list[dict[str, JsonValue]] = Field(
+        default_factory=list
+    )  # 截图等证据引用。
     extensions: dict[str, JsonValue] = Field(default_factory=dict)  # 采集器专属信息。
 
 

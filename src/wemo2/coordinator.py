@@ -7,7 +7,9 @@ from wemo2.models import RunResult
 
 
 class Coordinator:
-    def __init__(self, collector: BaseCollector, deduplicator: BaseDeduplicator, store: BaseStore):
+    def __init__(
+        self, collector: BaseCollector, deduplicator: BaseDeduplicator, store: BaseStore
+    ):
         self.collector = collector
         self.deduplicator = deduplicator
         self.store = store

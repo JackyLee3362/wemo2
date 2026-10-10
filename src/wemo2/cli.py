@@ -2,7 +2,6 @@
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated
 
 import typer
 
@@ -48,43 +47,38 @@ def show_version(value: bool) -> None:
 
 @cli.command()
 def start(
-    config: Annotated[
-        Path | None, typer.Option("--config", help="TOML 文件，默认尝试 wemo2.toml")
-    ] = None,
-    collector: Annotated[CollectorName | None, typer.Option(help="选择采集器")] = None,
-    deduplicator: Annotated[
-        DeduplicatorName | None, typer.Option(help="选择去重器")
-    ] = None,
-    store: Annotated[StoreName | None, typer.Option(help="选择存储器")] = None,
-    json_path: Annotated[
-        Path | None, typer.Option("--import-json", help="JSON 输入文件")
-    ] = None,
-    database: Annotated[Path | None, typer.Option(help="SQLite 文件路径")] = None,
-    log_level: Annotated[LogLevel | None, typer.Option(help="日志级别")] = None,
-    version: Annotated[
-        bool,
-        typer.Option(
-            "--version", callback=show_version, is_eager=True, help="显示版本并退出"
-        ),
-    ] = False,
+    config: Path | None = typer.Option(
+        None, "--config", help="TOML 文件，默认尝试 wemo2.toml"
+    ),
+    collector: CollectorName | None = typer.Option(None, help="选择采集器"),
+    deduplicator: DeduplicatorName | None = typer.Option(None, help="选择去重器"),
+    store: StoreName | None = typer.Option(None, help="选择存储器"),
+    json_path: Path | None = typer.Option(None, "--import-json", help="JSON 输入文件"),
+    database: Path | None = typer.Option(None, help="SQLite 文件路径"),
+    log_level: LogLevel | None = typer.Option(None, help="日志级别"),
+    version: bool = typer.Option(
+        False, "--version", callback=show_version, is_eager=True, help="显示版本并退出"
+    ),
 ) -> None:
     # None 表示未指定，不能用 CLI 默认值覆盖文件配置。
-    values = {
-        key: value.value if isinstance(value, StrEnum) else value
-        for key, value in {
-            "collector": collector,
-            "deduplicator": deduplicator,
-            "store": store,
-            "json_path": json_path,
-            "database": database,
-            "log_level": log_level,
-        }.items()
-        if value is not None
-    }
+    values = {}
+    if collector is not None:
+        values["collector"] = collector.value
+    if deduplicator is not None:
+        values["deduplicator"] = deduplicator.value
+    if store is not None:
+        values["store"] = store.value
+    if json_path is not None:
+        values["json_path"] = json_path
+    if database is not None:
+        values["database"] = database
+    if log_level is not None:
+        values["log_level"] = log_level.value
     if json_path is not None:
         if collector == CollectorName.pseudo:
             raise typer.BadParameter("--collector pseudo 不能同时指定 --import-json")
-        values.setdefault("collector", "json")
+        if collector is None:
+            values["collector"] = "json"
     try:
         settings = load_config(values, config)
     except (OSError, ValueError, TypeError) as error:

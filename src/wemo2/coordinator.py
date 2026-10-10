@@ -21,7 +21,14 @@ class Coordinator:
                 decision = self.deduplicator.resolve(observation, self.store)
                 action = self.store.save(observation, decision)
             result.collected += 1
-            setattr(result, action, getattr(result, action) + 1)
+            if action == "created":
+                result.created += 1
+            elif action == "merged":
+                result.merged += 1
+            elif action == "unchanged":
+                result.unchanged += 1
+            else:
+                raise ValueError(f"未知存储动作：{action}")
         logger.info(
             "采集完成：读取 {}，新增 {}，更新 {}，未变更 {}",
             result.collected,

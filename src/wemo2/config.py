@@ -41,9 +41,9 @@ def _resolve_paths(values: dict, directory: Path) -> dict:
         value = result.get(key)
         if isinstance(value, (str, Path)):
             path = Path(value)
-            result[key] = (
-                (directory / path).resolve() if not path.is_absolute() else path
-            )
+            if not path.is_absolute():
+                path = (directory / path).resolve()
+            result[key] = path
     return result
 
 
@@ -60,9 +60,15 @@ def load_config(
     if config_path is not None or path.exists():
         with path.open("rb") as handle:
             file_values = _resolve_paths(tomllib.load(handle), path.resolve().parent)
-    explicit = file_values | _resolve_paths(overrides or {}, directory)
+    command_values = _resolve_paths(overrides or {}, directory)
+    explicit = dict(file_values)
+    explicit.update(command_values)
     # 保留 JSON 导入的原有默认组合；任何显式设置（即便等于默认值）都优先。
     defaults = AppConfig().model_dump()
     if explicit.get("collector", defaults["collector"]) == "json":
-        defaults.update(deduplicator="stable", store="sqlite")
-    return AppConfig.model_validate(_resolve_paths(defaults, directory) | explicit)
+        defaults["deduplicator"] = "stable"
+        defaults["store"] = "sqlite"
+    values = _resolve_paths(defaults, directory)
+    values.update(file_values)
+    values.update(command_values)
+    return AppConfig.model_validate(values)

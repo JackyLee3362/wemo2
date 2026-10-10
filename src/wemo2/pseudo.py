@@ -41,7 +41,10 @@ class PseudoCollector(BaseCollector):
             second.source.native_post_id = "pseudo-post-002"
             second.content.text = "第二条模拟朋友圈"
             observations = [first, first, second]
-        self.observations = tuple(item.model_copy(deep=True) for item in observations)
+        records = []
+        for observation in observations:
+            records.append(observation.model_copy(deep=True))
+        self.observations = tuple(records)
 
     def collect(self) -> Iterable[Observation]:
         for observation in self.observations:
@@ -56,9 +59,10 @@ class PseudoDeduplicator(BaseDeduplicator):
             observation.account_scope, observation.observation_id
         )
         if previous is not None:
-            if canonical_json(
-                Observation.model_validate_json(previous.payload)
-            ) != canonical_json(observation):
+            previous_observation = Observation.model_validate_json(previous.payload)
+            previous_payload = canonical_json(previous_observation)
+            current_payload = canonical_json(observation)
+            if previous_payload != current_payload:
                 raise ValueError(
                     "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
                 )
@@ -87,7 +91,9 @@ class PseudoStore(BaseStore):
         self, scope: str, observation_id: str
     ) -> SavedObservation | None:
         record = self._observations.get((scope, observation_id))
-        return record.model_copy(deep=True) if record is not None else None
+        if record is None:
+            return None
+        return record.model_copy(deep=True)
 
     def find_post(self, scope: str, identity_key: str) -> Post | None:
         for post in self._posts.values():
@@ -104,10 +110,12 @@ class PseudoStore(BaseStore):
         post_id = decision.post_id or str(uuid4())
         existing = self._posts.get(post_id)
         if existing is None:
-            if decision.identity_key is not None and self.find_post(
-                observation.account_scope, decision.identity_key
-            ):
-                raise ValueError("动态身份已经存在，必须先去重")
+            if decision.identity_key is not None:
+                duplicate = self.find_post(
+                    observation.account_scope, decision.identity_key
+                )
+                if duplicate is not None:
+                    raise ValueError("动态身份已经存在，必须先去重")
             post = Post(
                 post_id=post_id,
                 account_scope=observation.account_scope,
@@ -121,19 +129,21 @@ class PseudoStore(BaseStore):
         else:
             post = existing.model_copy(deep=True)
             merged = post.content.model_dump(mode="json", exclude_unset=True)
-            for field, value in observation.content.model_dump(
-                mode="json", exclude_unset=True
-            ).items():
+            incoming = observation.content.model_dump(mode="json", exclude_unset=True)
+            for field, value in incoming.items():
                 status = observation.field_status.get(field, "partial")
-                if value is not None and status != "unknown":
-                    if status == "complete" or merged.get(field) is None:
-                        merged[field] = value
+                if value is None or status == "unknown":
+                    continue
+                if status == "complete" or merged.get(field) is None:
+                    merged[field] = value
             content = Content.model_validate(merged)
             changed = canonical_json(content) != canonical_json(post.content)
             post.content = content
-            post.revision += int(changed)
+            action = "unchanged"
+            if changed:
+                post.revision += 1
+                action = "merged"
             post.last_seen_at = max(post.last_seen_at, observation.observed_at)
-            action = "merged" if changed else "unchanged"
         self._posts[post_id] = post
         if action != "unchanged":
             self._revisions[(post_id, post.revision)] = post.content.model_copy(
@@ -148,7 +158,10 @@ class PseudoStore(BaseStore):
         return action
 
     def list_posts(self) -> list[Post]:
-        return [post.model_copy(deep=True) for post in self._posts.values()]
+        posts = []
+        for post in self._posts.values():
+            posts.append(post.model_copy(deep=True))
+        return posts
 
     def close(self) -> None:
         pass

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from wemo2.composition import build_coordinator
 from wemo2.coordinator import Coordinator
 from wemo2.deduplicator import Deduplicator
 from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
+from wemo2.models import Content
 from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
 
 
@@ -90,3 +92,59 @@ class ComponentTests(unittest.TestCase):
         posts = store.list_posts()
         posts[0].content.text = "外部修改"
         self.assertNotEqual(store.list_posts()[0].content.text, "外部修改")
+
+    def test_field_completeness_is_preserved_in_both_stores(self):
+        first = list(PseudoCollector().collect())[0]
+        records = [first]
+        for number, status, text in (
+            (1, "unknown", "不能覆盖"),
+            (2, "complete", None),
+            (3, "partial", ""),
+            (4, "complete", ""),
+        ):
+            observation = first.model_copy(deep=True)
+            observation.observation_id = f"field-update-{number}"
+            observation.content = Content(text=text)
+            observation.field_status["text"] = status
+            records.append(observation)
+
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("pseudo", "sqlite"):
+                with self.subTest(store=name):
+                    coordinator = build_coordinator(
+                        deduplicator="stable",
+                        store=name,
+                        database=Path(directory) / "fields.sqlite3",
+                    )
+                    coordinator.collector = PseudoCollector(records)
+                    with coordinator.store:
+                        result = coordinator.run()
+                        post = coordinator.store.list_posts()[0]
+                        self.assertEqual(result.merged, 1)
+                        self.assertEqual(result.unchanged, 3)
+                        self.assertEqual(post.content.text, "")
+                        self.assertEqual(post.revision, 2)
+
+    def test_last_seen_compares_actual_time_in_both_stores(self):
+        first = list(PseudoCollector().collect())[0]
+        newer = first.model_copy(deep=True)
+        newer.observation_id = "newer-observation"
+        newer.observed_at = datetime.fromisoformat("2026-10-10T22:00:00+08:00")
+        older = first.model_copy(deep=True)
+        older.observation_id = "older-observation"
+        older.observed_at = datetime.fromisoformat("2026-10-10T13:30:00+00:00")
+
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ("pseudo", "sqlite"):
+                with self.subTest(store=name):
+                    coordinator = build_coordinator(
+                        deduplicator="stable",
+                        store=name,
+                        database=Path(directory) / "times.sqlite3",
+                    )
+                    coordinator.collector = PseudoCollector([first, newer, older])
+                    with coordinator.store:
+                        coordinator.run()
+                        post = coordinator.store.list_posts()[0]
+                        self.assertEqual(post.last_seen_at, newer.observed_at)
+                        self.assertEqual(post.revision, 1)

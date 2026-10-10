@@ -58,14 +58,18 @@ class SQLiteStore(BaseStore):
             "SELECT * FROM observations WHERE account_scope=? AND observation_id=?",
             (scope, observation_id),
         ).fetchone()
-        return SavedObservation.model_validate(dict(row)) if row else None
+        if row is None:
+            return None
+        return SavedObservation.model_validate(dict(row))
 
     def find_post(self, scope: str, identity_key: str) -> Post | None:
         row = self.connection.execute(
             "SELECT * FROM posts WHERE account_scope=? AND identity_key=?",
             (scope, identity_key),
         ).fetchone()
-        return self._post_from_row(row) if row else None
+        if row is None:
+            return None
+        return self._post_from_row(row)
 
     def save(self, observation: Observation, decision: Decision) -> Action:
         if decision.action == "unchanged":
@@ -99,22 +103,25 @@ class SQLiteStore(BaseStore):
             # 最小实现按顶层字段更新；部分值只补缺，完整值才允许替换。
             for key, value in incoming.items():
                 status = statuses.get(key, "partial")
-                if value is not None and status != "unknown":
-                    if statuses.get(key) == "complete" or merged.get(key) is None:
-                        merged[key] = value
+                if value is None or status == "unknown":
+                    continue
+                if status == "complete" or merged.get(key) is None:
+                    merged[key] = value
             content = canonical_json(Content.model_validate(merged))
-            changed = content != existing["content"]
-            action = "merged" if changed else "unchanged"
-            revision = existing["revision"] + int(changed)
+            action = "unchanged"
+            revision = existing["revision"]
+            if content != existing["content"]:
+                action = "merged"
+                revision += 1
+            last_seen_at = existing["last_seen_at"]
+            if observation.observed_at > datetime.fromisoformat(last_seen_at):
+                last_seen_at = observed_at
             self.connection.execute(
                 "UPDATE posts SET content=?, revision=?, last_seen_at=? WHERE post_id=?",
                 (
                     content,
                     revision,
-                    max(
-                        (existing["last_seen_at"], observed_at),
-                        key=datetime.fromisoformat,
-                    ),
+                    last_seen_at,
                     post_id,
                 ),
             )
@@ -136,12 +143,15 @@ class SQLiteStore(BaseStore):
 
     @staticmethod
     def _post_from_row(row: sqlite3.Row) -> Post:
-        return Post.model_validate(dict(row) | {"content": json.loads(row["content"])})
+        values = dict(row)
+        values["content"] = json.loads(row["content"])
+        return Post.model_validate(values)
 
     def list_posts(self) -> list[Post]:
-        return [
-            self._post_from_row(row)
-            for row in self.connection.execute(
-                "SELECT * FROM posts ORDER BY first_seen_at, post_id"
-            )
-        ]
+        rows = self.connection.execute(
+            "SELECT * FROM posts ORDER BY first_seen_at, post_id"
+        )
+        posts = []
+        for row in rows:
+            posts.append(self._post_from_row(row))
+        return posts

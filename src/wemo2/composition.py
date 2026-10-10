@@ -28,10 +28,12 @@ def build_coordinator(
     else:
         raise ValueError(f"未知采集器：{collector}")
 
-    strategies = {"pseudo": PseudoDeduplicator, "stable": Deduplicator}
-    if deduplicator not in strategies:
+    if deduplicator == "pseudo":
+        strategy = PseudoDeduplicator()
+    elif deduplicator == "stable":
+        strategy = Deduplicator()
+    else:
         raise ValueError(f"未知去重器：{deduplicator}")
-    strategy = strategies[deduplicator]()
 
     target: BaseStore
     if store == "pseudo":

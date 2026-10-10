@@ -41,12 +41,11 @@ def launch(config: AppConfig) -> None:
     logger.remove()
     sink = logger.add(sys.stderr, level=config.log_level)
     try:
-        try:
-            result = run_config(config)
-        except Exception:
-            logger.exception("流程执行失败")
-            raise SystemExit(1) from None
+        result = run_config(config)
         print(result.model_dump_json())
+    except Exception:
+        logger.exception("流程执行失败")
+        raise SystemExit(1) from None
     finally:
         logger.remove(sink)
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from wemo2.coordinator import Coordinator
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
+from wemo2_collector.models import Platform
 
 
 def build_coordinator(
@@ -15,6 +16,7 @@ def build_coordinator(
     json_path: str | Path | None = None,
     database: str | Path = "data/wemo2.sqlite3",
     stop_policy: StopPolicy | None = None,
+    platform: Platform = Platform.windows,
 ) -> Coordinator:
     if collector is None:
         collector = collectors.default_name()
@@ -22,7 +24,11 @@ def build_coordinator(
         deduplicator = deduplicators.default_name()
     if store is None:
         store = stores.default_name()
-    settings = {"json_path": json_path, "database": database}
+    settings = {
+        "json_path": json_path,
+        "database": database,
+        "platform": Platform(platform),
+    }
     # 在创建任何实例前校验组合，避免无效配置提前打开存储资源。
     collectors.validate(collector, settings)
     deduplicators.validate(deduplicator, settings)

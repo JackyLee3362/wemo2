@@ -1,6 +1,7 @@
 # 复制为 wemo2.toml 后，应用启动会自动读取。
 # 命令行显式选项 > 本文件 > 代码默认配置。
 collector = "pseudo"
+platform = "windows"  # 目标数据源平台，后续可选择 android；此处不表示已有真实 Android 采集器。
 deduplicator = "pseudo"
 store = "pseudo"
 database = "data/wemo2.sqlite3"

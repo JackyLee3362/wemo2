@@ -99,11 +99,13 @@ stores = ComponentRegistry("存储器", BaseStore)
 
 # 新增内置实现只需在这里导入并注册，不修改 CLI、配置模型或协调器。
 IMPORT_COLLECTOR = "json"
-collectors.register("pseudo", PseudoCollector, default=True)
+collectors.register(
+    "pseudo", PseudoCollector, default=True, parameters={"platform": "platform"}
+)
 collectors.register(
     IMPORT_COLLECTOR,
     JsonCollector,
-    parameters={"path": "json_path"},
+    parameters={"path": "json_path", "platform": "platform"},
     defaults={"deduplicator": "stable", "store": "sqlite"},
 )
 deduplicators.register("pseudo", PseudoDeduplicator, default=True)

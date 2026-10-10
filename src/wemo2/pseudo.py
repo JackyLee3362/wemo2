@@ -17,10 +17,16 @@ from wemo2.models import (
     SavedObservation,
     Source,
 )
+from wemo2_collector.models import Platform
 
 
 class PseudoCollector(BaseCollector):
-    def __init__(self, observations: Iterable[Observation] | None = None):
+    def __init__(
+        self,
+        observations: Iterable[Observation] | None = None,
+        platform: Platform = Platform.windows,
+    ):
+        self.platform = Platform(platform)
         if observations is None:
             first = Observation(
                 schema_version="0.1.0",

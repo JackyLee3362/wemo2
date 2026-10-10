@@ -12,6 +12,11 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 ## 1. 模块边界
 
+界面采集器内部设计见 [wemo2_collector 架构](src/wemo2_collector/ARCHITECTURE.md)。
+新包定义平台驱动、页面路由器、截图器、定位器、文字识别器和动态读取器的抽象接口。
+配置中的 `platform` 表示目标采集源平台，取 `windows` 或 `android`，默认 Windows，
+通过注册表传入 Collector；当前实际采集仍为 pseudo/JSON，真实 UI 采集器尚未接入。
+
 应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
 `AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
 CLI 只提供帮助、版本、配置路径和日志路径四个选项；组件选择、输入路径和停止策略等

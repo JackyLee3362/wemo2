@@ -1,0 +1,183 @@
+# wemo2_collector 界面采集架构
+
+状态：设计与接口骨架。当前没有注册真实 UI 采集器，也没有安装或运行 UIA、OpenCV、EasyOCR。
+本轮先定义边界和数据流；Windows 首版实现随后按本设计接入，Android 只预留平台契约。
+目录采用 `wemo2_collector`，便于标准 Python import；当前与 `wemo2` 一起打包，不是独立发行包。
+
+## 1. 技术依据与适用边界
+
+用户提供的[文章](https://www.cnblogs.com/zhaoweiwei/p/19731420/uiautomation)提出组合窗口控制、
+截图、模板匹配、OCR 和输入模拟。它的完整示例针对聊天操作，不能直接当作朋友圈解析器，
+也不能据此保证所有微信版本的页面结构或控件可访问性。
+
+本设计采用以下能力组合：
+
+- [uiautomation](https://github.com/yinkaisheng/Python-UIAutomation-for-Windows)：Windows 窗口与可访问控件操作。其能力依赖应用是否提供 UI Automation Provider；先探测实际能力，再决定是否使用控件定位。
+- [Pillow ImageGrab](https://pillow.readthedocs.io/en/stable/reference/ImageGrab.html)：获取窗口区域的截图。截图是否被遮挡、最小化或裁切需要实现侧验证。
+- [OpenCV 模板匹配](https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html)：定位预先准备的图标模板，保留匹配分数；模板大小、主题和缩放变化需要配置及验证。
+- [EasyOCR](https://github.com/JaidedAI/EasyOCR)：读取图片中的文字及位置、置信度，首版计划用中文和英文、CPU 模式；Reader 初始化复用，不在每屏重复加载模型。
+
+这是基于上述能力提出的架构，朋友圈导航与卡片布局需要后续用实际版本和截图验证。
+不依赖文章中的固定坐标，也不复用发送消息的示例动作。首版只允许必要的导航、滚动和读取。
+
+## 2. 组件边界
+
+```mermaid
+flowchart TD
+    Coordinator[wemo2 协调器] --> Collector[UiCollector 采集编排]
+    Collector --> Router[页面路由器]
+    Router --> Locator[定位器]
+    Router --> Driver[平台驱动]
+    Collector --> Capture[截图器]
+    Capture --> Frame[截图与区域快照]
+    Frame --> Reader[动态卡片解析器]
+    Reader --> OCR[文字识别器]
+    Reader --> Observation[Observation]
+    Observation --> Coordinator
+    Coordinator --> Dedup[去重器与存储器]
+```
+
+| 组件 | 输入与输出 | 职责 |
+| --- | --- | --- |
+| PlatformDriver | 配置 → Surface；点击/滚动请求 → 操作结果 | 连接窗口或设备，执行所有平台动作，验证坐标及当前目标 |
+| Screenshotter | Surface → Screenshot | 获取并保存目标区域图片，记录窗口位置、尺寸、帧 ID 和时间 |
+| Locator | Screenshot + 目标名 → LocatedTarget 或 None | 在当前帧内定位，不直接执行点击；可组合 UIA、模板和 OCR |
+| TextRecognizer | Screenshot → TextBlock 列表 | 输出原始文本、局部坐标和置信度，不猜测动态结构 |
+| PageRouter | 页面目标 → 验证后的 Screenshot | 判断页面、寻找目标、调用驱动并验证跳转结果；有超时和重试上限 |
+| MomentReader | 已确认的朋友圈 Screenshot → Observation 列表 | 卡片分割、字段关联、完整度判断及证据附加 |
+| UiCollector | 平台及采集配置 → 逐条 Observation | 串联能力、维护会话、按需翻页、响应 stop，不负责最终去重或保存 |
+
+`Locator` 定位导航目标；`MomentReader` 解析动态卡片，两者不能把 OCR 文本简单拼在一起代替结构识别。
+策略停止由外部协调器根据去重器返回的 `is_duplicate` 决定，UI 层只响应停止，不重复实现去重规则。
+
+## 3. 模块布局
+
+已经落地的文件：
+
+```text
+src/wemo2_collector/
+    __init__.py
+    ARCHITECTURE.md
+    models.py          # Platform、Page、Rect、Surface、Screenshot、LocatedTarget、TextBlock
+    interfaces.py      # Driver、Screenshotter、Locator、Recognizer、Router、Reader 抽象接口
+```
+
+随后按实际实现增加以下模块，不提前放置返回假成功的占位实现：
+
+```text
+    collector.py       # UiCollector(BaseCollector)，平台与页面流程编排
+    routing.py         # 页面状态判定与路由定义
+    locating.py        # UIA/模板/OCR 定位的组合策略
+    recognition.py     # OCR 结果标准化与朋友圈卡片读取
+    windows/           # WindowsDriver、WindowsScreenshotter
+    android/           # 后续 AndroidDriver、AndroidScreenshotter
+    profiles/          # 微信版本、主题、DPI 对应的页面标志及模板
+```
+
+共享目录不是平台适配器的全局注册表。可用的顶层 Collector 仍只在
+`wemo2/registry.py` 注册，后续 UI Collector 从这里接收 `platform` 及界面配置。
+依赖方向：wemo2 → 注册的 Collector → 路由/解析能力 → 平台驱动；接口层不导入具体驱动。
+当前共享数据类型仍使用 `wemo2.models.Observation`，以后拆独立发行包时可再抽出公共契约包。
+
+## 4. 平台参数与配置
+
+新增 `platform`，表示数据源所在平台，不表示当前 Python 主机操作系统。
+Windows 上的 Python 未来也可以通过设备驱动采集 Android，因此不能只根据 `sys.platform` 选择数据源。
+标准名称为 `windows`、`android`；不使用拼写 `andriod`。
+
+当前可以运行的示例：
+
+```toml
+collector = "pseudo"
+platform = "windows"
+duplicate_stop = "never"
+```
+
+`AppConfig.platform` → `run_config` → `build_coordinator(platform=...)` → 注册表参数映射 → Collector 构造函数。
+现有 PseudoCollector、JsonCollector 接收平台参数，仅作为采集来源配置，不因此访问微信或 Android。
+JSON 文件中原有来源信息不会被这个配置覆盖。
+
+未来 UI Collector 还需要以下设置，尚未加入当前 AppConfig，不应复制到当前运行配置中：
+
+| 设置 | 用途 |
+| --- | --- |
+| account_scope、device/instance ID | 隔离账号和设备来源，不能用昵称猜测身份 |
+| window_title、process_id 或 Android device_id | 绑定目标实例，多个匹配时要求明确选择 |
+| screenshot_dir、profile_path | 截图证据及版本对应的模板/页面描述 |
+| route_timeout、retry_limit | 防止导航或识别无限等待 |
+| max_pages、no_progress_limit | 限制页面总量和连续无进展次数 |
+| confidence_threshold、match_threshold | OCR/模板可信度阈值，由实际样本调优 |
+| dry_run | 只截图和识别，不执行鼠标或键盘动作 |
+
+CLI 继续只有帮助、版本、配置路径、日志路径；平台及以上业务设置放在配置文件中。
+未知平台在配置校验时拒绝。未来选择 Android 而未安装/实现对应驱动时，应报 `PLATFORM_UNSUPPORTED`，不能回退到 Windows。
+
+## 5. 页面路由与动作验证
+
+```text
+unknown → 探测 → login / home / moments / detail / modal
+home → 定位朋友圈入口 → 操作 → 重新截图 → 验证 moments
+detail → 定位返回入口 → 操作 → 重新截图 → 验证 moments
+modal → 仅处理明确允许的遮挡 → 重新探测
+login / unknown → 明确报错并终止，不盲点固定坐标
+```
+
+- 路由表描述起始页、目标页、目标定位规则和后置页面标志；不把控件名写死在流程循环里。
+- `ensure(Page.moments)` 返回已经验证的最新帧，不能只因为一次点击没有异常就宣称跳转成功。
+- 每一步先定位目标，再确认帧仍对应当前窗口，操作后等待状态变化并重新识别。
+- 弹窗、锁屏、登录页和窗口丢失是不同错误。截图失败或网络加载中不等于没有动态。
+- 单次定位失败可以有限重试；超过限制保留诊断证据并终止本次任务。
+
+## 6. 截图、坐标与识别契约
+
+`Surface.bounds` 采用平台物理像素；`LocatedTarget.bounds` 和 `TextBlock.bounds` 采用当前截图局部像素。
+简单窗口裁切时，屏幕位置 = 截图原点 + 局部位置。负屏幕坐标允许存在，不能按主屏幕尺寸随意截断。
+Windows 驱动在连接前处理 DPI 感知；若识别侧缩放了图片，返回位置必须先转换回原始截图像素。
+
+动作必须验证：目标 `frame_id`、窗口/设备标识、当前区域位置与尺寸、目标是否在截图内。
+窗口移动、滚动、旋转或缩放后旧帧不能继续点击；重新截图定位。局部裁切还须保留父帧偏移。
+UIA 返回的控件坐标也要归一到这个契约，不能与模板坐标混用。
+
+首版定位顺序建议：可访问控件 → 模板 → OCR，并由目标 profile 配置允许的方法。
+不满足阈值、目标不唯一或识别结果不确定时返回失败，不用低分最高匹配强行点击。
+OCR 只提供文字块；朋友圈卡片的作者、正文、时间、图片顺序需要 MomentReader 按布局关联。
+首版只提取可见作者名称、正文和时间原文，媒体及评论缺失标记 partial/unknown。
+只有可确认的源动态 ID 才标记稳定；OCR 文本、坐标或截图哈希不能充当稳定源动态 ID。
+
+## 7. 采集会话与停止
+
+```text
+驱动连接并探测能力
+router.ensure(moments)
+循环处理当前帧：
+    reader.read(frame)
+    逐条 yield Observation
+    外部协调器保存当前记录，判断重复及停止策略
+    只有协调器请求下一条且本屏已输出完毕，才执行 router.advance()
+    下一帧不存在且确认到底：结束
+finally：释放会话与 OCR/截图资源
+```
+
+一期不做后台预取，避免协调器停止后鼠标还在操作。`stop()` 必须幂等并设置取消状态，
+路由重试、等待和翻页在执行前检查；外部关闭生成器时，其 finally 必须释放连接。
+停止时不关闭用户微信，不清理尚未交付的证据，不丢弃已经输出的 Observation。
+
+同屏边界卡片和滚动重叠是正常情况，可向去重器再次交付。仅做采集会话内的进展判断，
+不把“整屏截图重复”直接当成数据重复。页面 hash 不变只能说明无进展；达到限制但未确认到底，
+应报 `NO_PROGRESS` 并标记覆盖不完整。评论或图片动画也可能让截图变化，必须结合内容区域判断。
+
+## 8. 首版落地顺序与验收
+
+1. Windows 连接及截图：只读探测窗口、区域、DPI，保存当前截图，明确绑定实例。
+2. 简单识别器：使用固定截图测试模板定位和文字识别，输出位置、文本、分数；先不假定页面能自动导航。
+3. 路由器：为已验证的微信版本准备页面 profile，接入导航与跳转后验证。
+4. MomentReader：建立真实脱敏截图样本，提取可见卡片为 Observation，接入已有去重/存储流程。
+5. 加入受控滚动、停止和无进展检测，再扩展 Android 驱动。
+
+自动测试先使用假的驱动、静态截图和模拟 OCR 输出，覆盖未知页、低分/多目标、旧帧拒绝、
+坐标偏移、超时、滚动无进展、部分卡片与停止后不再翻页。真实 Windows 联调验证多显示器、
+DPI、窗口移动、主题与微信版本；不能用纯模拟测试宣称真实微信识别已完成。
+
+截图可能包含私人内容，证据写入本地受控目录，日志只记录帧 ID、区域和状态，不打印正文。
+截图保留期与最终媒体备份分别管理。OCR 模型下载及 Windows 专属依赖仅在用户选择 UI 实现时启用，
+现有 CLI 的 help、version、JSON 和 pseudo 流程不应因此加载模型或连接窗口。

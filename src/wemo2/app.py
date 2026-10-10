@@ -41,6 +41,7 @@ def run_config(config: AppConfig) -> RunResult:
         json_path=config.json_path,
         database=config.database,
         stop_policy=policy,
+        platform=config.platform,
     )
     with coordinator.store:
         return coordinator.run()

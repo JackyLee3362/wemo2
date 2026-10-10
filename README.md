@@ -3,6 +3,7 @@
 朋友圈备份工具，使用 Python 实现自动采集、去重与持久化。
 
 - 支持平台：Windows
+- 采集源配置：`platform = "windows"`，预留 `android`；当前真实界面采集尚未实现。
 - 首版交互：CLI；Tkinter 界面留待后续实现。
 - 日志：Loguru
 - 命令行：Typer
@@ -148,6 +149,10 @@ TOML 使用 `duplicate_stop` 和 `duplicate_limit`，遵循配置文件 > 默认
 提前停止只影响后续处理，不能撤销已经完成的文件读取。
 
 ## 添加组件实现
+
+界面采集架构与接口骨架位于 `src/wemo2_collector/`，详见
+[采集器架构](src/wemo2_collector/ARCHITECTURE.md)。平台配置经组装入口与注册表传给采集器，
+不增加 CLI 选项。后续实现将按平台驱动、页面路由、截图、定位、文字识别和卡片解析拆分。
 
 组件名称和实现类统一维护在 `src/wemo2/registry.py`。新实现继承对应抽象类后，
 在该文件导入并注册即可；不用同步修改 CLI 枚举、配置名称列表或组装分支：

@@ -1,5 +1,6 @@
 # JSON 文件导入并保存到 SQLite，路径相对于本配置文件所在目录。
 collector = "json"
+platform = "windows"
 json_path = "examples/observations.json"
 deduplicator = "stable"
 store = "sqlite"

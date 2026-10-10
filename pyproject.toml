@@ -30,7 +30,10 @@ extend-exclude = [".uv-python"]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["wemo2"]
+known-first-party = ["wemo2", "wemo2_collector"]
+
+[tool.uv.build-backend]
+module-name = ["wemo2", "wemo2_collector"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Typer 的默认参数是框架读取的声明元数据，不是业务函数调用。

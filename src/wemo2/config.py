@@ -8,12 +8,16 @@ from pydantic import ConfigDict, Field, model_validator
 
 from wemo2.models import StopPolicy
 from wemo2.registry import collectors, deduplicators, stores
+from wemo2_collector.models import Platform
 
 
 class AppConfig(StopPolicy):
     """应用启动设置；未知键报错，防止配置拼写错误被悄悄忽略。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+    platform: Platform = Field(
+        default=Platform.windows, description="采集源平台：windows 或 android"
+    )
     collector: str = Field(
         default_factory=collectors.default_name, description="采集器注册名称"
     )

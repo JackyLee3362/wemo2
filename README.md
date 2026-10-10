@@ -5,6 +5,7 @@
 - 支持平台：Windows
 - 桌面交互：Tkinter
 - 日志：Loguru
+- 命令行：Typer
 - 最终持久化与展示：Memos
 - 项目与依赖管理：uv，Python 3.12 及以上
 
@@ -28,7 +29,7 @@ uv run wemo2 --collector pseudo
 
 默认组合为 `PseudoCollector + PseudoDeduplicator + PseudoStore`，内置三次投递
 （两条动态，其中一条重复），输出新增 2 条、未变更 1 条。PseudoStore 只存内存，退出即丢失。
-桌面窗口也提供“运行模拟流程”按钮。
+桌面窗口点击“运行当前配置”执行所选组件组合。
 
 选择不同组件可混合运行，例如模拟采集 + 稳定源 ID 去重 + SQLite 存储：
 
@@ -56,6 +57,8 @@ uv run wemo2 --import-json examples/observations.json
 ```
 
 默认存储位置为 `data/wemo2.sqlite3`，使用 `--database PATH` 可更换。
+桌面“导入 JSON”操作沿用当前配置的去重器和存储器，默认配置下保存到内存；
+需要写入数据库时，请在配置中选择 `store = "sqlite"`。
 再次导入同一文件不会新增动态；相同稳定源 ID 的新观察可更新完整字段并保留修订。
 
 四个组件分别为 `JsonCollector`（JSON 数组采集）、`Deduplicator`（幂等与源身份去重）、
@@ -75,3 +78,35 @@ uv run wemo2 --import-json examples/observations.json
 
 运行验证：`uv run python -m unittest discover -s tests -v`。
 接口与数据结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 启动配置
+
+优先级为 **命令行显式选项 > 配置文件 > 代码默认配置**。启动时自动尝试读取
+当前目录的 `wemo2.toml`；没有该文件就使用默认值。显式指定的文件不存在、格式错误、
+未知字段或无效选项都会报错。可复制 `wemo2.example.toml` 后修改：
+
+```powershell
+Copy-Item wemo2.example.toml wemo2.toml
+uv run wemo2 --config wemo2.toml --mode cli --store sqlite
+```
+
+配置文件采用 TOML 顶层字段：
+
+```toml
+mode = "cli"
+collector = "pseudo"
+deduplicator = "stable"
+store = "sqlite"
+database = "data/wemo2.sqlite3"
+log_level = "INFO"
+```
+
+代码默认使用 `gui` 模式和三个 `pseudo` 组件；JSON 采集时，未显式设置的去重器和存储器
+分别默认 `stable` 和 `sqlite`。文件或命令行中明确填写的值始终优先，包括 `pseudo`。
+`--collector` 或 `--import-json` 默认执行后退出，可用 `--mode gui` 改为桌面模式。
+仅修改其他选项不会隐式切换模式。
+
+JSON 输入在文件中使用 `json_path`，命令行使用 `--import-json`。配置文件中的相对路径
+以配置文件所在目录为基准；命令行和代码默认相对路径以当前工作目录为基准。
+`--log-level` 可覆盖日志级别。配置模型与加载逻辑位于 `src/wemo2/config.py`，
+Typer 参数定义位于 `src/wemo2/cli.py`，可用 `uv run wemo2 --help` 查看。

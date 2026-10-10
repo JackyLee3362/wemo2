@@ -1,0 +1,12 @@
+# 复制为 wemo2.toml 后，应用启动会自动读取。
+# 命令行显式选项 > 本文件 > 代码默认配置。
+mode = "gui"
+collector = "pseudo"
+deduplicator = "pseudo"
+store = "pseudo"
+database = "data/wemo2.sqlite3"
+log_level = "INFO"
+
+# JSON 采集时改为 collector = "json"，并设置输入路径。
+# json_path = "examples/observations.json"
+# 稳定源 ID 去重与实际持久化可选择 stable / sqlite。

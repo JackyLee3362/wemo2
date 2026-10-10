@@ -1,6 +1,5 @@
 """Tkinter 与命令行入口。"""
 
-import argparse
 import sys
 import tkinter as tk
 from queue import Empty, Queue
@@ -11,6 +10,7 @@ from loguru import logger
 
 from wemo2 import __version__
 from wemo2.composition import build_coordinator
+from wemo2.config import AppConfig
 from wemo2.models import RunResult
 
 
@@ -26,7 +26,20 @@ def run_demo() -> RunResult:
         return coordinator.run()
 
 
-def create_window(database: str = "data/wemo2.sqlite3") -> tk.Tk:
+def run_config(config: AppConfig) -> RunResult:
+    """命令行和桌面操作共用合并后的配置。"""
+    coordinator = build_coordinator(
+        config.collector, config.deduplicator, config.store,
+        json_path=config.json_path, database=config.database,
+    )
+    with coordinator.store:
+        return coordinator.run()
+
+
+def create_window(database: str | None = None, *, config: AppConfig | None = None) -> tk.Tk:
+    config = config or AppConfig()
+    if database is not None:
+        config = AppConfig.model_validate(config.model_dump() | {"database": database})
     root = tk.Tk()
     root.title("wemo2 · 朋友圈备份")
     root.geometry("620x420")
@@ -39,22 +52,23 @@ def create_window(database: str = "data/wemo2.sqlite3") -> tk.Tk:
     ttk.Separator(frame).pack(fill="x", pady=12)
     ttk.Label(frame, text="采集平台: Windows").pack(anchor="w", pady=4)
     ttk.Label(frame, text="持久化与展示: Memos").pack(anchor="w", pady=4)
-    ttk.Label(frame, text=f"当前本地存储：{database}").pack(anchor="w", pady=4)
-    status = tk.StringVar(value="选择 JSON 导入；Windows 采集和 Memos 同步待接入。")
+    ttk.Label(frame, text=f"当前组合：{config.collector} / {config.deduplicator} / {config.store}").pack(anchor="w", pady=4)
+    ttk.Label(frame, text=f"SQLite 路径：{config.database}").pack(anchor="w", pady=4)
+    status = tk.StringVar(value="运行当前配置，或选择 JSON 文件后沿用当前去重器和存储器。")
     ttk.Label(frame, textvariable=status, wraplength=560).pack(anchor="w", pady=12)
     messages: Queue[str] = Queue()
 
-    def worker(path: str | None) -> None:
+    def worker(job: AppConfig) -> None:
         try:
-            result = import_json(path, database) if path is not None else run_demo()
+            result = run_config(job)
             messages.put(
-                ("模拟流程（内存）：" if path is None else "导入完成：")
+                ("完成（内存）：" if job.store == "pseudo" else "完成（SQLite）：")
                 + f"读取 {result.collected} 条，新增 {result.created} 条，"
                 f"更新 {result.merged} 条，未变更 {result.unchanged} 条"
             )
         except Exception as error:
-            logger.exception("导入失败")
-            messages.put(f"导入失败：{error}。已提交记录保留，可重试。")
+            logger.exception("流程执行失败")
+            messages.put(f"执行失败：{error}")
 
     def choose_file() -> None:
         path = filedialog.askopenfilename(
@@ -64,12 +78,18 @@ def create_window(database: str = "data/wemo2.sqlite3") -> tk.Tk:
             start(path)
 
     def start(path: str | None = None) -> None:
+        job = config
+        if path is not None:
+            job = AppConfig.model_validate(config.model_dump() | {"collector": "json", "json_path": path})
+        elif config.collector == "json" and config.json_path is None:
+            choose_file()
+            return
         import_button.configure(state="disabled")
         demo_button.configure(state="disabled")
         close_button.configure(state="disabled")
         root.protocol("WM_DELETE_WINDOW", lambda: None)
         status.set("正在采集、去重并保存…")
-        Thread(target=worker, args=(path,), daemon=False).start()
+        Thread(target=worker, args=(job,), daemon=False).start()
         root.after(100, poll)
 
     def poll() -> None:
@@ -86,54 +106,36 @@ def create_window(database: str = "data/wemo2.sqlite3") -> tk.Tk:
 
     import_button = ttk.Button(frame, text="导入 JSON", command=choose_file)
     import_button.pack(anchor="w")
-    demo_button = ttk.Button(frame, text="运行模拟流程", command=start)
+    demo_button = ttk.Button(frame, text="运行当前配置", command=start)
     demo_button.pack(anchor="w", pady=8)
     close_button = ttk.Button(frame, text="关闭", command=root.destroy)
     close_button.pack(anchor="e")
     return root
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="wemo2 朋友圈备份工具")
-    parser.add_argument("--version", action="version", version=f"wemo2 {__version__}")
-    parser.add_argument("--import-json", metavar="PATH", help="导入 JSON 文件后退出")
-    parser.add_argument("--collector", choices=("pseudo", "json"), help="选择采集器并执行")
-    parser.add_argument("--deduplicator", choices=("pseudo", "stable"), help="选择去重器")
-    parser.add_argument("--store", choices=("pseudo", "sqlite"), help="选择存储器")
-    parser.add_argument(
-        "--database", default="data/wemo2.sqlite3", help="SQLite 文件路径"
-    )
-    args = parser.parse_args()
-    collector = args.collector or ("json" if args.import_json else None)
-    if collector == "json" and not args.import_json:
-        parser.error("JSON 采集器需要 --import-json PATH")
-    if collector == "pseudo" and args.import_json:
-        parser.error("--collector pseudo 不能同时指定 --import-json")
-    if collector is None and (args.deduplicator or args.store):
-        parser.error("请选择 --collector 或提供 --import-json")
-
+def launch(config: AppConfig) -> None:
+    """使用最终配置启动桌面或执行采集流程。"""
     logger.remove()
-    logger.add(sys.stderr, level="INFO")
-    if collector is not None:
+    logger.add(sys.stderr, level=config.log_level)
+    if config.mode == "cli":
         try:
-            coordinator = build_coordinator(
-                collector,
-                args.deduplicator or ("pseudo" if collector == "pseudo" else "stable"),
-                args.store or ("pseudo" if collector == "pseudo" else "sqlite"),
-                json_path=args.import_json, database=args.database,
-            )
-            with coordinator.store:
-                result = coordinator.run()
+            result = run_config(config)
         except Exception:
-            logger.exception("导入失败，已提交记录保留，可重试")
+            logger.exception("流程执行失败")
             raise SystemExit(1) from None
         print(result.model_dump_json())
         return
     logger.info("启动 wemo2 {}", __version__)
     try:
-        root = create_window(args.database)
+        root = create_window(config=config)
         root.mainloop()
     except tk.TclError:
         logger.exception("无法启动桌面窗口，请检查 Python 的 Tk 支持及桌面环境")
         raise SystemExit(1) from None
     logger.info("wemo2 已退出")
+
+
+def main() -> None:
+    from wemo2.cli import cli
+
+    cli()

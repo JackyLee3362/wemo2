@@ -12,6 +12,11 @@ wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个�
 
 ## 1. 模块边界
 
+应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
+`AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
+配置统一控制运行模式、三个组件的选择、JSON 输入、SQLite 路径和日志级别，经过
+Pydantic 校验后交给组合入口；桌面和命令行都使用同一份最终配置。
+
 当前 Python 代码使用 `interfaces.py` 的 `BaseCollector`、`BaseDeduplicator`、`BaseStore`
 三个 ABC 抽象类。`Coordinator` 只依赖这些契约，通过构造函数注入具体实现；
 `composition.build_coordinator()` 是选择并组装实现的入口，协调器本身不做模拟。

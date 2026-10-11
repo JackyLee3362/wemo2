@@ -173,7 +173,25 @@ class UiProfile(BaseModel):
                 raise ValueError("媒体菜单验证必须使用 OCR 目标")
             for step in workflow.steps.values():
                 if step.target is not None:
-                    self.media_target(step.target)
+                    target = self.media_target(step.target)
+                    if target.kind == "source" and (
+                        step.before != "original"
+                        or step.expect != "viewer"
+                        or step.action != "click"
+                    ):
+                        raise ValueError("动态预览目标只用于打开查看器")
+                    if target.kind == "ocr" and (
+                        step.before != "menu"
+                        or step.expect != "save_dialog"
+                        or step.action != "click"
+                    ):
+                        raise ValueError("文字目标只用于从菜单打开保存对话框")
+                    if target.kind == "region" and (
+                        step.before != "viewer"
+                        or step.expect != "menu"
+                        or step.action != "right_click"
+                    ):
+                        raise ValueError("查看器区域只用于打开媒体菜单")
         return self
 
     def media_target(self, name: str) -> MediaTargetSpec:

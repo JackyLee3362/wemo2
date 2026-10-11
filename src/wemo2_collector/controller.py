@@ -371,6 +371,7 @@ class UiController:
         verify: Callable[[Screenshot], ValidationResult] | None = None,
         timeout: float = 5,
         workflow_name: str | None = None,
+        settle_seconds: float = 0,
     ) -> object:
         """记录一次平台对话框操作，失败保留执行事实，不自动重发。"""
         result = ActionResult(
@@ -392,6 +393,7 @@ class UiController:
                 if not isinstance(value, Path):
                     raise RuntimeError("保存步骤未返回文件路径")
                 verify_file(value)
+            time.sleep(settle_seconds)
             self._observe(result, timeout, True, verify)
         except Exception as error:
             logger.exception("媒体平台步骤 {} 失败，停止后续输入：{}", operation, error)
@@ -573,6 +575,7 @@ class UiController:
                     verify=verify,
                     timeout=step.timeout_seconds,
                     workflow_name=workflow_name,
+                    settle_seconds=step.settle_seconds,
                 )
             else:
                 self.platform_step(
@@ -583,6 +586,7 @@ class UiController:
                     verify=verify,
                     timeout=step.timeout_seconds,
                     workflow_name=workflow_name,
+                    settle_seconds=step.settle_seconds,
                 )
                 return None
 

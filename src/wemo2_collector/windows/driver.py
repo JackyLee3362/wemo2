@@ -291,9 +291,7 @@ class WindowsDriver(BaseDriver):
         dialog = (
             Desktop(backend="win32").window(handle=self.device.handle).wrapper_object()
         )
-        if dialog.class_name() != "#32770" or not any(
-            word in dialog.window_text() for word in ("另存为", "保存", "Save")
-        ):
+        if not self.is_save_dialog():
             raise RuntimeError("未识别到标准另存为对话框，未输入文件名")
         edits = []
         for edit in dialog.descendants(class_name="Edit"):

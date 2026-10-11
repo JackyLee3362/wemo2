@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
+from wemo2.config import AppConfig
 from wemo2_collector.controller import UiController
 from wemo2_collector.feed import FeedCapture, overlap_shift
 from wemo2_collector.locating import AirtestLocator
@@ -612,8 +613,6 @@ class FeedCaptureTests(unittest.TestCase):
     def test_invalid_region_and_unknown_workflow_fail_configuration_validation(self):
         with self.assertRaises(ValidationError):
             MediaTargetSpec(kind="region", region=(0.9, 0, 0.5, 1))
-        from wemo2.config import AppConfig
-
         with self.assertRaises(ValidationError):
             AppConfig(
                 collector="windows_screenshot",
@@ -663,3 +662,36 @@ class FeedCaptureTests(unittest.TestCase):
         )
         self.assertEqual(persisted["workflow"], "save_media")
         self.assertTrue(persisted["executed"])
+
+    def test_low_confidence_and_duplicate_menu_targets_do_not_save(self):
+        line = TextLine(
+            text="另存为", score=0.99, bounds=Rect(x=10, y=20, width=70, height=20)
+        )
+        for lines in ([line.model_copy(update={"score": 0.7})], [line, line]):
+            with self.subTest(lines=lines):
+                media = self.make_media_capture()
+                media.reader.read.return_value = lines
+                with self.assertRaisesRegex(RuntimeError, "未唯一识别"):
+                    media._save_media(
+                        self.first, Rect(x=10, y=40, width=80, height=80), 40
+                    )
+                media.controller.driver.save_dialog.assert_not_called()
+                media.controller.driver.click.assert_called_once()
+                media.controller.driver.right_click.assert_called_once()
+
+    def test_workflow_step_limit_is_checked_before_input(self):
+        media = self.make_media_capture()
+        profile = media.controller.profile
+        profile.media_workflows["save_media"] = profile.media_workflow(
+            "save_media"
+        ).model_copy(update={"max_steps": 2})
+        with self.assertRaisesRegex(ValueError, "上限"):
+            media.controller.run_media_workflow(
+                self.first,
+                Rect(x=10, y=40, width=80, height=80),
+                self.path,
+                media.reader,
+                MagicMock(),
+            )
+        media.controller.capture.assert_not_called()
+        media.controller.driver.click.assert_not_called()

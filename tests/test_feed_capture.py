@@ -88,7 +88,11 @@ class FeedCaptureTests(unittest.TestCase):
         return FeedCapture(
             self.controller,
             FeedCaptureConfig(
-                max_screens=2, recognize_nickname=False, save_media=False, **options
+                region=Rect(x=0, y=0, width=200, height=300),
+                max_screens=2,
+                recognize_nickname=False,
+                save_media=False,
+                **options,
             ),
             self.path,
         )
@@ -124,6 +128,29 @@ class FeedCaptureTests(unittest.TestCase):
         )
         self.assertEqual(len(manifest["frames"]), 2)
 
+    def test_overlap_can_use_middle_strip_when_bottom_media_finishes_loading(self):
+        changed = self.pixels[30:330].copy()
+        changed[190:270] = np.random.default_rng(8).integers(
+            20, 220, (80, 200, 3), dtype=np.uint8
+        )
+        with (
+            Image.fromarray(self.pixels[:300]) as old,
+            Image.fromarray(changed) as current,
+        ):
+            self.assertEqual(overlap_shift(old, current), 30)
+
+    def test_overlap_allows_one_pixel_dpi_rounding_but_rejects_conflicting_motion(self):
+        for middle_shift, expected in ((31, 30), (35, None)):
+            with self.subTest(middle_shift=middle_shift):
+                changed = self.pixels[30:330].copy()
+                top = 100 - middle_shift
+                changed[top : top + 100] = self.pixels[100:200]
+                with (
+                    Image.fromarray(self.pixels[:300]) as old,
+                    Image.fromarray(changed) as current,
+                ):
+                    self.assertEqual(overlap_shift(old, current), expected)
+
     def test_missing_anchor_does_not_scroll_and_preserves_partial_image(self):
         self.controller.locator.locate_all.side_effect = None
         self.controller.locator.locate_all.return_value = []
@@ -132,6 +159,72 @@ class FeedCaptureTests(unittest.TestCase):
         self.controller.scroll.assert_not_called()
         self.assertTrue(result.segments[0].partial_start)
         self.assertTrue(result.segments[0].partial_end)
+
+    def test_verified_feed_cover_without_anchor_can_scroll_to_first_card(self):
+        self.controller.locator.locate_all.side_effect = [
+            [],
+            [self.anchor(self.second, 250)],
+        ]
+        self.controller.detect_page.return_value = "moments_selected"
+        result = self.scanner().run(self.first)
+        self.assertEqual(result.stop_reason, "max_screens")
+        self.assertEqual(len(result.frames), 2)
+        self.controller.scroll.assert_called_once()
+
+    def test_feed_layout_scales_insets_and_keeps_content_when_window_widens(self):
+        profile = build_profile()
+        surface = self.surface.model_copy(
+            update={"bounds": Rect(x=0, y=0, width=1045, height=809)}
+        )
+        self.assertEqual(
+            profile.feed_bounds(surface), Rect(x=375, y=40, width=664, height=760)
+        )
+        wide = surface.model_copy(
+            update={"bounds": Rect(x=0, y=0, width=1245, height=809)}
+        )
+        self.assertEqual(profile.feed_bounds(wide).x, 375)
+        self.assertEqual(profile.feed_bounds(wide).width, 864)
+        normal = surface.model_copy(
+            update={"scale": 1, "bounds": Rect(x=0, y=0, width=836, height=647)}
+        )
+        self.assertEqual(
+            profile.feed_bounds(normal), Rect(x=300, y=32, width=531, height=608)
+        )
+
+    def test_embedded_viewer_requires_larger_version_of_same_thumbnail(self):
+        profile = build_profile()
+        locator = AirtestLocator(profile, "dark", MatchConfig())
+        surface = self.surface.model_copy(
+            update={"bounds": Rect(x=0, y=0, width=600, height=500)}
+        )
+        thumbnail = Image.fromarray(self.pixels[:80, :80])
+        before = Image.new("RGB", (600, 500), (30, 30, 30))
+        after = before.copy()
+        self.addCleanup(thumbnail.close)
+        self.addCleanup(before.close)
+        self.addCleanup(after.close)
+        before.paste(thumbnail, (410, 350))
+        with thumbnail.resize((240, 240), Image.Resampling.BILINEAR) as enlarged:
+            after.paste(enlarged, (170, 100))
+        before.save(self.path / "source.png")
+        after.save(self.path / "viewer.png")
+        source = self.first.model_copy(
+            update={"surface": surface, "image_path": self.path / "source.png"}
+        )
+        current = source.model_copy(update={"image_path": self.path / "viewer.png"})
+        bounds = Rect(x=410, y=350, width=80, height=80)
+        self.assertFalse(
+            locator.is_enlarged_preview(source, source, bounds, (0, 0, 1, 1), 0.9, 1.5)
+        )
+        self.assertTrue(
+            locator.is_enlarged_preview(source, current, bounds, (0, 0, 1, 1), 0.9, 1.5)
+        )
+        moved = current.model_copy(
+            update={"surface": surface.model_copy(update={"surface_id": "other"})}
+        )
+        self.assertFalse(
+            locator.is_enlarged_preview(source, moved, bounds, (0, 0, 1, 1), 0.9, 1.5)
+        )
 
     def test_unverifiable_overlap_stops_and_retains_both_raw_frames(self):
         unrelated = self.frame("unrelated", self.pixels[400:700])
@@ -214,7 +307,7 @@ class FeedCaptureTests(unittest.TestCase):
         driver = MagicMock()
         screenshotter = MagicMock()
         driver.prepare_capture.return_value = self.surface
-        screenshotter.capture.side_effect = [self.first, self.second]
+        screenshotter.capture.side_effect = [self.first, self.second, self.second]
         controller = UiController(
             driver, screenshotter, MagicMock(), build_profile(), directory=self.path
         )
@@ -223,6 +316,7 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(action.status, "verified")
         self.assertEqual(action.wheel_steps, 1)
         driver.scroll.assert_called_once()
+        self.assertEqual(len(controller.results), 1)
         self.assertTrue((self.path / f"action_{action.action_id}.json").exists())
 
     def test_invalid_scroll_region_cannot_send_input(self):
@@ -235,6 +329,28 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(action.status, "failed")
         self.assertFalse(action.attempted)
         driver.scroll.assert_not_called()
+
+    def test_scroll_waits_until_animation_stops_before_returning_coordinates(self):
+        driver = MagicMock()
+        driver.prepare_capture.return_value = self.surface
+        moving = self.frame("moving", self.pixels[70:370])
+        screenshotter = MagicMock()
+        screenshotter.capture.side_effect = [
+            self.first,
+            moving,
+            self.second,
+            self.second,
+        ]
+        controller = UiController(
+            driver, screenshotter, MagicMock(), build_profile(), directory=self.path
+        )
+        with patch("wemo2_collector.controller.time.sleep"):
+            action = controller.scroll(Rect(x=0, y=0, width=200, height=300), 1)
+        self.assertEqual(action.status, "verified")
+        self.assertEqual(action.after, self.second)
+        self.assertEqual(screenshotter.capture.call_count, 4)
+        driver.scroll.assert_called_once()
+        self.assertEqual(len(controller.results), 1)
 
     def test_media_input_failure_saves_card_metadata_before_propagating(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
@@ -306,7 +422,7 @@ class FeedCaptureTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(ValidationError):
                 FeedCaptureConfig.model_validate(options)
 
-    def make_media_capture(self):
+    def make_media_capture(self, *, embedded=False):
         state = {"page": "original"}
         profile = build_profile()
         workflow = profile.media_workflow("save_media")
@@ -333,6 +449,11 @@ class FeedCaptureTests(unittest.TestCase):
                 }
             ),
         }
+        if embedded:
+            frames["viewer"] = frames["viewer"].model_copy(
+                update={"surface": self.surface}
+            )
+            frames["menu"] = frames["menu"].model_copy(update={"surface": self.surface})
         controller = UiController(
             driver,
             MagicMock(),
@@ -357,7 +478,9 @@ class FeedCaptureTests(unittest.TestCase):
             state["page"] = "viewer"
             return self.second.image_path
 
-        def close(original):
+        def close(original, *, allow_embedded=False):
+            if embedded:
+                self.assertTrue(allow_embedded)
             state["page"] = "original"
 
         driver.click.side_effect = click
@@ -365,6 +488,8 @@ class FeedCaptureTests(unittest.TestCase):
         driver.save_dialog.side_effect = save
         driver.close_viewer.side_effect = close
         driver.is_save_dialog.side_effect = lambda: state["page"] == "dialog"
+        driver.current_surface.side_effect = lambda: frames[state["page"]].surface
+        controller.locator.is_enlarged_preview.return_value = embedded
         media = MediaCapture(controller, FeedCaptureConfig(), self.path)
         media.reader = MagicMock()
         media.reader.read.return_value = [
@@ -376,6 +501,56 @@ class FeedCaptureTests(unittest.TestCase):
         sleep.start()
         self.addCleanup(sleep.stop)
         return media
+
+    def test_embedded_media_save_returns_only_after_verified_preview(self):
+        media = self.make_media_capture(embedded=True)
+        saved = media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        self.assertEqual(saved.kind, "image")
+        media.controller.driver.close_viewer.assert_called_once_with(
+            self.surface, allow_embedded=True
+        )
+        self.assertTrue(
+            all(result.status == "verified" for result in media.controller.results)
+        )
+
+    def test_unconfirmed_embedded_viewer_stops_without_right_click_or_repeat(self):
+        media = self.make_media_capture(embedded=True)
+        media.controller.locator.is_enlarged_preview.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "验证超时"):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        media.controller.driver.click.assert_called_once()
+        media.controller.driver.right_click.assert_not_called()
+        self.assertTrue(media.controller.results[-1].executed)
+
+    def test_nickname_search_can_skip_cover_above_first_card(self):
+        reader = TextRecognizer()
+        line = TextLine(
+            text="昵称", score=0.99, bounds=Rect(x=90, y=200, width=60, height=20)
+        )
+        reader.read = MagicMock(
+            side_effect=lambda image: [line] if image.height > 220 else []
+        )
+        with Image.new("RGB", (200, 300), (30, 30, 30)) as image:
+            with Image.fromarray(self.pixels[:50, :50]) as avatar:
+                image.paste(avatar, (28, 194))
+            image.paste((130, 145, 170), (90, 200, 150, 220))
+            self.assertIsNone(reader.nickname(image, 1.25))
+            self.assertEqual(
+                reader.nickname(image, 1.25, search_height=image.height), line
+            )
+
+    def test_media_tiles_uses_card_background_below_bright_cover(self):
+        with Image.new("RGB", (400, 400), (30, 30, 30)) as image:
+            image.paste((220, 40, 20), (0, 0, 400, 100))
+            image.paste((70, 160, 220), (95, 180, 175, 260))
+            image.paste((220, 150, 70), (182, 180, 262, 260))
+            self.assertEqual(
+                media_tiles(image, 1.25),
+                [
+                    Rect(x=95, y=180, width=80, height=80),
+                    Rect(x=182, y=180, width=80, height=80),
+                ],
+            )
 
     def test_media_save_flow_checks_real_file_then_returns_to_list(self):
         media = self.make_media_capture()
@@ -409,6 +584,34 @@ class FeedCaptureTests(unittest.TestCase):
             media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
         self.controller.click_region.assert_not_called()
 
+    def test_media_cache_reuses_same_preview_with_dpi_rounding_and_render_changes(self):
+        media = self.make_media_capture()
+        bounds = Rect(x=10, y=40, width=80, height=80)
+        saved = media._save_media(self.first, bounds, 40)
+        changed = self.frame("render", self.pixels[:300] + 1)
+        media.controller.capture = MagicMock(return_value=changed)
+        media.controller.locator = AirtestLocator(
+            media.controller.profile, "dark", MatchConfig()
+        )
+        self.assertEqual(media._save_media(changed, bounds, 41), saved)
+        self.assertEqual(media.controller.driver.click.call_count, 2)
+        self.assertEqual(len(media.previews), 1)
+
+    def test_media_cache_rejects_other_image_at_nearby_position(self):
+        media = self.make_media_capture()
+        bounds = Rect(x=10, y=40, width=80, height=80)
+        media._save_media(self.first, bounds, 40)
+        media.controller.capture = MagicMock(return_value=self.second)
+        media.controller.locator = AirtestLocator(
+            media.controller.profile, "dark", MatchConfig()
+        )
+        media.controller.run_media_workflow = MagicMock(
+            side_effect=RuntimeError("需要新下载")
+        )
+        with self.assertRaisesRegex(RuntimeError, "需要新下载"):
+            media._save_media(self.second, bounds, 41)
+        media.controller.run_media_workflow.assert_called_once()
+
     def test_unrecognized_menu_does_not_guess_save_coordinates(self):
         media = self.make_media_capture()
         media.reader.read.return_value = []
@@ -428,6 +631,8 @@ class FeedCaptureTests(unittest.TestCase):
         dialog.class_name.return_value = "#32770"
         dialog.window_text.return_value = "另存为"
         dialog.descendants.return_value = [MagicMock(), MagicMock()]
+        for edit in dialog.descendants.return_value:
+            edit.class_name.return_value = "Edit"
         with (
             patch.object(driver, "verify_capture"),
             patch.object(driver, "current_surface"),
@@ -473,7 +678,15 @@ class FeedCaptureTests(unittest.TestCase):
         dialog.class_name.return_value = "#32770"
         dialog.window_text.return_value = "另存为"
         edit = MagicMock()
-        dialog.descendants.return_value = [edit]
+        edit.class_name.return_value = "Edit"
+        edit.control_id.return_value = 1001
+        search = MagicMock()
+        search.class_name.return_value = "Edit"
+        search.control_id.return_value = 0
+        toolbar = MagicMock()
+        toolbar.class_name.return_value = "ToolbarWindow32"
+        toolbar.control_id.return_value = 1001
+        dialog.descendants.return_value = [toolbar, search, edit]
 
         def save(key):
             destination = Path(edit.set_edit_text.call_args.args[0]).with_suffix(".png")
@@ -495,6 +708,8 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         self.assertEqual(path.parent, self.path / "media")
         self.assertTrue(path.name.startswith("asset_"))
+        search.set_edit_text.assert_not_called()
+        toolbar.set_edit_text.assert_not_called()
         old_device.keyevent.assert_called_once_with("{ENTER}")
         old_device.screen.close.assert_called_once()
         create.assert_called_once_with(handle=456, foreground=False)

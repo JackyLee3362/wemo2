@@ -21,7 +21,8 @@ settle_seconds = 0.6
 timeout_seconds = 2
 recognize_nickname = true
 save_media = true
-# 未指定 region 时按整窗采集；列表区域使用客户区物理像素。
+# 未指定 region 时按 UiProfile 布局和 DPI 裁出右侧朋友圈列表。
+# 手动指定时使用客户区物理像素，窗口尺寸或 DPI 改变后需要同步调整。
 # [collector_options.feed.region]
 # x = 0
 # y = 0

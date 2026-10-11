@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from PIL import Image, ImageChops
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
+from wemo2_collector import validation
 from wemo2_collector.controller import UiController
 from wemo2_collector.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
 from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
@@ -42,6 +43,15 @@ class CardCapture(BaseModel):
     media_candidates: int = Field(default=0, ge=0)
 
 
+class SavedPreview(BaseModel):
+    """同一次连续采集中的媒体缓存证据；位置和图像都一致才允许复用文件。"""
+
+    source: Screenshot
+    bounds: Rect
+    stream_y: int
+    file: SavedMedia
+
+
 class MediaCapture:
     """识别可见卡片，按点击、右键、另存为、文件验证、返回列表的顺序执行。
 
@@ -57,6 +67,7 @@ class MediaCapture:
         self.reader = TextRecognizer()
         self.paths: list[Path] = []
         self.saved: dict[str, SavedMedia] = {}
+        self.previews: list[SavedPreview] = []
         self.last_saved: SavedMedia | None = None
 
     def _save_media(
@@ -66,18 +77,27 @@ class MediaCapture:
         fresh = self.controller.capture()
         if fresh.surface != source.surface:
             raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
+        if not validation.region_unchanged(source, fresh, bounds):
+            raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
         box = (bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height)
-        with Image.open(source.image_path) as old, Image.open(fresh.image_path) as new:
-            with (
-                old.crop(box).convert("RGB") as first,
-                new.crop(box).convert("RGB") as second,
-            ):
-                with ImageChops.difference(first, second) as difference:
-                    if difference.getbbox() is not None:
-                        raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
+        with Image.open(source.image_path) as old:
+            with old.crop(box).convert("RGB") as first:
                 key = f"{stream_y}:{hashlib.sha256(first.tobytes()).hexdigest()}"
         if key in self.saved:
             return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
+        for preview in self.previews:
+            tolerance = max(1, round(2 * source.surface.scale))
+            if (
+                abs(preview.stream_y - stream_y) > tolerance
+                or abs(preview.bounds.x - bounds.x) > tolerance
+                or abs(preview.bounds.width - bounds.width) > 1
+                or abs(preview.bounds.height - bounds.height) > 1
+            ):
+                continue
+            if self.controller.locator.same_preview(
+                preview.source, source, preview.bounds, bounds
+            ):
+                return preview.file
         saved = None
 
         def on_file(path: Path) -> None:
@@ -102,6 +122,9 @@ class MediaCapture:
         if saved is None:
             raise RuntimeError("媒体流程未交付验证过的文件")
         self.saved[key] = saved
+        self.previews.append(
+            SavedPreview(source=source, bounds=bounds, stream_y=stream_y, file=saved)
+        )
         return saved
 
     def process(
@@ -145,7 +168,9 @@ class MediaCapture:
                     try:
                         if self.config.recognize_nickname:
                             card.nickname = self.reader.nickname(
-                                image, frame.surface.scale
+                                image,
+                                frame.surface.scale,
+                                search_height=image.height if index == 0 else None,
                             )
                         if self.config.save_media:
                             tiles = media_tiles(image, frame.surface.scale)

@@ -62,7 +62,7 @@ class RoutingTests(unittest.TestCase):
         self.make_image([(24, 306)])
         target = locator.locate(self.frame, "moments_entry")
         self.assertIsNotNone(target)
-        self.assertEqual(target.bounds, Rect(x=24, y=306, width=28, height=28))
+        self.assertEqual(target.bounds, Rect(x=24, y=306, width=20, height=20))
         self.assertGreater(target.score, 0.99)
         self.make_image([])
         self.assertIsNone(locator.locate(self.frame, "moments_entry"))
@@ -375,7 +375,8 @@ class RoutingTests(unittest.TestCase):
             Image.new("RGB", (1100, 800), (40, 40, 40)) as image,
         ):
             image.paste(template, (24, 306))
-            with template.resize((25, 25), Image.Resampling.BILINEAR) as smaller:
+            size = round(template.width * 0.9)
+            with template.resize((size, size), Image.Resampling.BILINEAR) as smaller:
                 image.paste(smaller, (24, 500))
             image.save(self.frame.image_path)
         self.assertIsNone(locator.locate(self.frame, "moments_entry"))

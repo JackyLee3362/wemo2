@@ -56,6 +56,21 @@ def _check_region(frame: Screenshot, region: Rect) -> None:
         raise RuntimeError("目标或验证区域超出截图范围")
 
 
+def region_unchanged(before: Screenshot, after: Screenshot, region: Rect) -> bool:
+    """严格比较指定区域像素，用于动画稳定及旧媒体坐标的内容连续性校验。"""
+    if before.surface != after.surface:
+        return False
+    _check_region(before, region)
+    box = (region.x, region.y, region.x + region.width, region.y + region.height)
+    with Image.open(before.image_path) as old, Image.open(after.image_path) as current:
+        with (
+            old.crop(box).convert("RGB") as first,
+            current.crop(box).convert("RGB") as second,
+        ):
+            with ImageChops.difference(first, second) as difference:
+                return difference.getbbox() is None
+
+
 def detect_page(frame: Screenshot, profile: UiProfile, locator: AirtestLocator) -> str:
     """匹配注册页面标志，多页面命中或不确定时返回 unknown。"""
     matches = []

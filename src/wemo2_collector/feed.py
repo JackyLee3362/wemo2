@@ -26,20 +26,33 @@ def overlap_shift(before: Image.Image, after: Image.Image) -> int | None:
     if before.size != after.size:
         return None
     height = before.height
-    start = height * 2 // 3
-    with before.crop((0, start, before.width, height)) as tail:
-        search = np.array(tail.convert("RGB"))[:, :, ::-1].copy()
-    if search.std() < 1:
-        return None
     source = np.array(after.convert("RGB"))[:, :, ::-1].copy()
-    matches = TemplateMatching(
-        search, source, threshold=0.95, rgb=False
-    ).find_all_results()
-    if not matches or len(matches) != 1:
-        return None
-    shift = start - int(matches[0]["rectangle"][0][1])
-    if not 0 < shift <= start:
-        return None
+    shift = None
+    best_score = 0.0
+    # 底部新露出的图片可能仍在加载；中部提供独立证据，两个命中必须一致。
+    for start in (height * 2 // 3, height // 3):
+        end = min(height, start + height - height * 2 // 3)
+        with before.crop((0, start, before.width, end)) as strip:
+            search = np.array(strip.convert("RGB"))[:, :, ::-1].copy()
+        if search.std() < 1:
+            continue
+        matches = TemplateMatching(
+            search, source, threshold=0.95, rgb=False
+        ).find_all_results()
+        if not matches:
+            continue
+        if len(matches) != 1:
+            return None
+        candidate = start - int(matches[0]["rectangle"][0][1])
+        if not 0 < candidate <= height * 2 // 3:
+            return None
+        # 125% DPI 的子像素滚动可能让不同条带的整数定位相差 1 像素。
+        if shift is not None and abs(shift - candidate) > 1:
+            return None
+        score = matches[0]["confidence"]
+        if shift is None or score > best_score:
+            shift = candidate
+            best_score = score
     return shift
 
 
@@ -84,7 +97,9 @@ class FeedCapture:
             nickname = None
             if recognize and self.media is not None and self.config.recognize_nickname:
                 nickname = self.media.reader.nickname(
-                    image, self.result.frames[-1].surface.scale
+                    image,
+                    self.result.frames[-1].surface.scale,
+                    search_height=image.height if self.partial_start else None,
                 )
         segment = FeedSegment(
             image_path=path,
@@ -134,14 +149,11 @@ class FeedCapture:
             consumed = boundary
 
     def run(self, first: Screenshot) -> FeedCaptureResult:
-        """先识别锚点再输入；无锚点、无进展或拼接不可靠时停止。"""
+        """识别锚点并有上限地滚动；已验证封面可继续寻找首条动态。"""
         self.directory.mkdir(parents=True, exist_ok=False)
         frame = first
-        region = self.config.region or Rect(
-            x=0,
-            y=0,
-            width=frame.surface.bounds.width,
-            height=frame.surface.bounds.height,
+        region = self.config.region or self.controller.profile.feed_bounds(
+            frame.surface
         )
         previous = None
         try:
@@ -168,7 +180,11 @@ class FeedCapture:
                     self.media.process(
                         frame, region, anchors, self.stream_height - image.height
                     )
-                if not anchors and index == 0:
+                if (
+                    not anchors
+                    and index == 0
+                    and self.controller.detect_page(frame) != "moments_selected"
+                ):
                     self.result.stop_reason = "anchor_missing"
                     break
                 if index + 1 == self.config.max_screens:
@@ -186,6 +202,7 @@ class FeedCapture:
                         and action.after is not None
                         and action.validation is not None
                         and action.validation.status == "not_met"
+                        and action.validation.change_ratio is not None
                         and action.error is not None
                         and action.error.startswith("动作后验证超时")
                     ):

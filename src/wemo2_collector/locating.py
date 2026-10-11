@@ -152,3 +152,101 @@ class AirtestLocator:
             )
         targets.sort(key=lambda target: target.bounds.y)
         return targets
+
+    def is_enlarged_preview(
+        self,
+        source: Screenshot,
+        current: Screenshot,
+        bounds: Rect,
+        region: tuple[float, float, float, float],
+        threshold: float,
+        min_scale: float,
+    ) -> bool:
+        """用 Airtest 多尺度匹配确认同窗口已放大原缩略图，原列表不能通过校验。"""
+        # 仅在媒体验证时加载图像引擎，启动和帮助命令不受影响。
+        import numpy as np
+        from airtest.aircv.multiscale_template_matching import (
+            MultiScaleTemplateMatching,
+        )
+
+        if current.surface != source.surface:
+            return False
+        configure_airtest_logging()
+        x, y, width, height = region
+        size = current.surface.bounds
+        box = (
+            round(x * size.width),
+            round(y * size.height),
+            round((x + width) * size.width),
+            round((y + height) * size.height),
+        )
+        with Image.open(source.image_path) as image:
+            with image.crop(
+                (bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height)
+            ).convert("RGB") as preview:
+                template = np.array(preview)[:, :, ::-1].copy()
+        with Image.open(current.image_path) as image:
+            with image.crop(box).convert("RGB") as viewer:
+                screen = np.array(viewer)[:, :, ::-1].copy()
+        if template.std() < 1:
+            return False
+        # 原像素搜索和较细步长避免树叶等密集纹理被二次缩放后相似度失真。
+        match = MultiScaleTemplateMatching(
+            template,
+            screen,
+            threshold=threshold,
+            rgb=False,
+            scale_step=0.005,
+            scale_max=max(screen.shape[:2]),
+        ).find_best_result()
+        if match is None:
+            return False
+        left, top = match["rectangle"][0]
+        right, bottom = match["rectangle"][2]
+        return (
+            right - left >= bounds.width * min_scale
+            and bottom - top >= bounds.height * min_scale
+        )
+
+    def same_preview(
+        self, before: Screenshot, after: Screenshot, old_bounds: Rect, new_bounds: Rect
+    ) -> bool:
+        """核对已确认重叠位置的缩略图，允许 DPI 舍入但拒绝不同图片缓存。"""
+        import numpy as np
+        from airtest.aircv.template_matching import TemplateMatching
+
+        if before.surface != after.surface:
+            return False
+        configure_airtest_logging()
+        with Image.open(before.image_path) as image:
+            with image.crop(
+                (
+                    old_bounds.x,
+                    old_bounds.y,
+                    old_bounds.x + old_bounds.width,
+                    old_bounds.y + old_bounds.height,
+                )
+            ).convert("RGB") as crop:
+                template = np.array(crop)[:, :, ::-1].copy()
+        size = after.surface.bounds
+        with Image.open(after.image_path) as image:
+            with image.crop(
+                (
+                    max(0, new_bounds.x - 2),
+                    max(0, new_bounds.y - 2),
+                    min(size.width, new_bounds.x + new_bounds.width + 2),
+                    min(size.height, new_bounds.y + new_bounds.height + 2),
+                )
+            ).convert("RGB") as crop:
+                screen = np.array(crop)[:, :, ::-1].copy()
+        if (
+            template.std() < 1
+            or template.shape[0] > screen.shape[0]
+            or template.shape[1] > screen.shape[1]
+        ):
+            return False
+        # 已由流位置限定同一候选，只在其两像素边距内校准，不进行多目标搜索。
+        match = TemplateMatching(
+            template, screen, threshold=0.97, rgb=True
+        ).find_best_result()
+        return match is not None

@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from wemo2_collector.models import Rect, Surface
+
 
 class PageSpec(BaseModel):
     """页面的必需和排除标志；无必需标志的页面尚不能自动验证。"""
@@ -88,11 +90,17 @@ class MediaWorkflowSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     entry: str
     menu_target: str
+    viewer_mode: Literal["independent", "embedded", "auto"] = "auto"
+    # 同时容纳横图和竖图；过窄的中央区域会截断放大后的方形预览内容。
+    viewer_region: tuple[float, float, float, float] = (0.06, 0.06, 0.88, 0.88)
+    viewer_threshold: float = Field(default=0.9, gt=0, le=1)
+    viewer_min_scale: float = Field(default=1.5, gt=1)
     max_steps: int = Field(default=8, ge=1, le=30, strict=True)
     steps: dict[str, MediaStepSpec]
 
     @model_validator(mode="after")
     def validate_steps(self):
+        MediaTargetSpec(kind="region", region=self.viewer_region)
         current = self.entry
         visited = set()
         previous = "original"
@@ -148,10 +156,14 @@ class UiProfile(BaseModel):
     themes: dict[str, dict[str, TemplateSpec]] = Field(default_factory=dict)
     media_targets: dict[str, MediaTargetSpec] = Field(default_factory=dict)
     media_workflows: dict[str, MediaWorkflowSpec] = Field(default_factory=dict)
+    feed_insets: tuple[int, int, int, int] = (375, 40, 6, 9)
+    layout_scale: float = Field(default=1.25, gt=0)
 
     @model_validator(mode="after")
     def validate_structure(self):
         """检查名称及路由端点，不允许未验证页面冒充可验证目标。"""
+        if any(value < 0 for value in self.feed_insets):
+            raise ValueError("列表边距不能为负数")
         for name, page in self.pages.items():
             if name != page.name or name == "unknown":
                 raise ValueError(f"页面名称与键不一致或使用保留名称：{name}")
@@ -193,6 +205,18 @@ class UiProfile(BaseModel):
                     ):
                         raise ValueError("查看器区域只用于打开媒体菜单")
         return self
+
+    def feed_bounds(self, surface: Surface) -> Rect:
+        """从主题布局边距和实际 DPI 得到列表范围，窗口宽度改变时不按比例裁掉昵称。"""
+        ratio = surface.scale / self.layout_scale
+        left, top, right, bottom = self.feed_insets
+        left, top = round(left * ratio), round(top * ratio)
+        right, bottom = round(right * ratio), round(bottom * ratio)
+        width = surface.bounds.width - left - right
+        height = surface.bounds.height - top - bottom
+        if width <= 0 or height <= 0:
+            raise ValueError("窗口太小，无法按页面布局定位朋友圈列表")
+        return Rect(x=left, y=top, width=width, height=height)
 
     def media_target(self, name: str) -> MediaTargetSpec:
         if name not in self.media_targets:
@@ -289,9 +313,10 @@ def build_profile() -> UiProfile:
         },
         themes={
             "dark": {
-                "moments_entry": TemplateSpec(path=assets / "moments_entry.png"),
+                # 只匹配图标内部，避免通知红点和侧栏背景改变导致误判。
+                "moments_entry": TemplateSpec(path=assets / "moments_entry_core.png"),
                 "discover_selected": TemplateSpec(
-                    path=assets / "discover_selected.png"
+                    path=assets / "discover_selected_core.png"
                 ),
                 "discover_menu": TemplateSpec(
                     path=assets / "discover_menu.png", region_ratio=0.4

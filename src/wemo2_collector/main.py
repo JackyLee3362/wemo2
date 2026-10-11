@@ -5,6 +5,7 @@ from pathlib import Path
 from loguru import logger
 from rich.text import Text
 
+from wemo2.collector import Collector
 from wemo2.config import AppConfig, load_config
 from wemo2.console import console, error_console
 from wemo2.logging import add_file_sink, initialize_startup_logging
@@ -13,7 +14,7 @@ from wemo2.registry import collectors
 
 def run_collector(config: AppConfig) -> list[Path]:
     """执行所选采集器并返回截图路径，调试时不持久化动态记录。"""
-    collector = collectors.create(config.collector, config.model_dump())
+    collector: Collector = collectors.create(config.collector, config.model_dump())
     try:
         # 消费完整迭代器，兼容返回列表和逐条产出记录的采集器。
         for _ in collector.collect():

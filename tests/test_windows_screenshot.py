@@ -52,6 +52,12 @@ class WindowsScreenshotTests(unittest.TestCase):
         ):
             self.assertEqual(driver.prepare_capture(), self.surface)
         driver.device.set_foreground.assert_called_once()
+        driver.device.mouse.move.assert_called_once_with(
+            coords=(
+                self.surface.bounds.x + 3,
+                self.surface.bounds.y + self.surface.bounds.height - 3,
+            )
+        )
 
     def test_prepare_capture_rejects_window_outside_virtual_screen(self):
         driver = WindowsDriver()

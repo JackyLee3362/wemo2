@@ -59,12 +59,14 @@ class TextRecognizer:
         lines.sort(key=lambda line: (line.bounds.y, line.bounds.x))
         return lines
 
-    def nickname(self, image: Image.Image, scale: float) -> TextLine | None:
+    def nickname(
+        self, image: Image.Image, scale: float, *, search_height: int | None = None
+    ) -> TextLine | None:
         """识别动态顶部蓝色昵称；表情及罕见字可能有误，结果不用于身份去重。"""
         import numpy as np
 
         with image.crop(
-            (0, 0, image.width, min(image.height, round(96 * scale)))
+            (0, 0, image.width, min(image.height, search_height or round(96 * scale)))
         ) as header:
             lines = self.read(header)
             for line in lines:
@@ -85,7 +87,11 @@ class TextRecognizer:
                         avatar_top + avatar_size,
                     )
                 ).convert("L") as avatar:
-                    if np.array(avatar).std() < 15:
+                    portrait = np.array(avatar)
+                    if (
+                        portrait.std() < 15
+                        or ((portrait >= 20) & (portrait <= 40)).mean() > 0.6
+                    ):
                         continue
                 with header.crop(
                     (
@@ -108,7 +114,11 @@ def media_tiles(image: Image.Image, scale: float) -> list[Rect]:
     import numpy as np
 
     pixels = np.array(image.convert("RGB"))
-    background = np.median(pixels[: max(1, round(4 * scale))], axis=(0, 1))
+    # 首屏顶部可能是封面，不能把封面颜色当作背景；寻找整幅卡片的主色桶。
+    quantized = pixels.astype(int) // 16
+    buckets = quantized[:, :, 0] * 256 + quantized[:, :, 1] * 16 + quantized[:, :, 2]
+    dominant = np.bincount(buckets.ravel(), minlength=4096).argmax()
+    background = np.median(pixels[buckets == dominant], axis=0)
     mask = (np.max(np.abs(pixels.astype(float) - background), axis=2) > 20).astype(
         "uint8"
     ) * 255

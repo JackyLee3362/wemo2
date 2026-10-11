@@ -140,6 +140,11 @@ class WindowsDriver(BaseDriver):
         surface = self.current_surface()
         if self.user32.GetForegroundWindow() != int(surface.surface_id):
             raise RuntimeError("截图前微信失去前台焦点，请重新运行")
+        # 鼠标停在文字或锚点上会触发悬停样式/高亮遮挡，截图前移到客户区左下角。
+        self.device.mouse.move(
+            coords=(surface.bounds.x + 3, surface.bounds.y + surface.bounds.height - 3)
+        )
+        time.sleep(0.2)  # 移走指针后等待悬停样式消失，再截取媒体像素。
         left = self.user32.GetSystemMetrics(76)
         top = self.user32.GetSystemMetrics(77)
         right = left + self.user32.GetSystemMetrics(78)
@@ -294,9 +299,20 @@ class WindowsDriver(BaseDriver):
         if not self.is_save_dialog():
             raise RuntimeError("未识别到标准另存为对话框，未输入文件名")
         edits = []
+        filename_edits = []
         for edit in dialog.descendants(class_name="Edit"):
-            if edit.is_visible() and edit.is_enabled():
+            # Win32 descendants 的 class_name 参数不会过滤子控件，必须核对实际类。
+            if edit.class_name() == "Edit" and edit.is_visible() and edit.is_enabled():
                 edits.append(edit)
+                logger.debug(
+                    "另存为输入框：control_id={}，parent_id={}",
+                    edit.control_id(),
+                    edit.parent().control_id(),
+                )
+                if edit.control_id() == 1001:
+                    filename_edits.append(edit)
+        if filename_edits:
+            edits = filename_edits
         if len(edits) != 1:
             raise RuntimeError("无法唯一识别文件名输入框，请提供另存为对话框截图")
         directory.mkdir(parents=True, exist_ok=True)
@@ -348,12 +364,12 @@ class WindowsDriver(BaseDriver):
             word in dialog.window_text() for word in ("另存为", "保存", "Save")
         )
 
-    def close_viewer(self, original: Surface) -> None:
-        """只在独立查看器窗口按一次 Escape，避免关闭主微信窗口。"""
+    def close_viewer(self, original: Surface, *, allow_embedded: bool = False) -> None:
+        """按一次 Escape 返回列表；内嵌查看器必须先由控制器验证放大图。"""
         from wemo2_collector.windows.backend import create_device
 
         self.verify_capture(self.current_surface())
-        if str(self.device.handle) == original.surface_id:
+        if str(self.device.handle) == original.surface_id and not allow_embedded:
             raise RuntimeError("媒体查看器未打开独立窗口，不能安全自动返回")
         self.device.keyevent("{ESC}")
         for _ in range(20):

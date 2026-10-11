@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from loguru import logger
-from PIL import Image, ImageChops
+from PIL import Image
 
 from wemo2_collector import validation
 from wemo2_collector.interfaces import BaseDriver
@@ -197,6 +197,7 @@ class UiController:
         locate_target: Callable[[Screenshot], LocatedTarget | None] | None = None,
         verify: Callable[[Screenshot], ValidationResult] | None = None,
         workflow_name: str | None = None,
+        stable_region: Rect | None = None,
     ) -> ActionResult:
         result = ActionResult(
             operation=operation,
@@ -252,6 +253,8 @@ class UiController:
             result.status = "executed"
             time.sleep(settle_seconds)
             self._observe(result, timeout, follow_foreground, verify)
+            if stable_region is not None and result.status == "verified":
+                self._wait_stable(result, stable_region, timeout)
         except Exception as error:
             logger.exception(
                 "界面动作 {} 失败；已尝试 {}，已执行 {}：{}",
@@ -330,7 +333,7 @@ class UiController:
         settle_seconds: float = 0.6,
         timeout: float = 2.0,
     ) -> ActionResult:
-        """在已确认的列表范围内滚动一次，并等待该范围发生变化。"""
+        """滚动一次，先验证列表变化，再等待连续两帧稳定，避免使用动画中的坐标。"""
         return self._perform(
             "scroll",
             "feed_region",
@@ -339,7 +342,24 @@ class UiController:
             wheel_steps=steps,
             timeout=timeout,
             settle_seconds=settle_seconds,
+            stable_region=region,
         )
+
+    def _wait_stable(self, result: ActionResult, region: Rect, timeout: float) -> None:
+        previous = result.after
+
+        def stable(frame: Screenshot) -> ValidationResult:
+            nonlocal previous
+            passed = previous is not None and validation.region_unchanged(
+                previous, frame, region
+            )
+            previous = frame
+            return ValidationResult(
+                status="passed" if passed else "not_met",
+                message="滚动后列表连续两帧稳定",
+            )
+
+        self._observe(result, timeout, False, stable)
 
     def click_region(
         self,
@@ -418,23 +438,8 @@ class UiController:
         if spec.kind == "source":
             if frame.surface != source.surface:
                 raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
-            box = (
-                bounds.x,
-                bounds.y,
-                bounds.x + bounds.width,
-                bounds.y + bounds.height,
-            )
-            with (
-                Image.open(source.image_path) as old,
-                Image.open(frame.image_path) as current,
-            ):
-                with (
-                    old.crop(box).convert("RGB") as first,
-                    current.crop(box).convert("RGB") as second,
-                ):
-                    with ImageChops.difference(first, second) as difference:
-                        if difference.getbbox() is not None:
-                            raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
+            if not validation.region_unchanged(source, frame, bounds):
+                raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
             area = bounds
         else:
             x, y, width, height = spec.region
@@ -522,11 +527,20 @@ class UiController:
                     )
                 message = "返回原列表及内容连续性"
             else:
-                passed = (
-                    frame.surface.surface_id != source.surface.surface_id
-                    and not self.driver.is_save_dialog()
-                )
-                message = "独立媒体查看器状态"
+                passed = False
+                if not self.driver.is_save_dialog():
+                    if workflow.viewer_mode in ("auto", "independent"):
+                        passed = frame.surface.surface_id != source.surface.surface_id
+                    if not passed and workflow.viewer_mode in ("auto", "embedded"):
+                        passed = self.locator.is_enlarged_preview(
+                            source,
+                            frame,
+                            bounds,
+                            workflow.viewer_region,
+                            workflow.viewer_threshold,
+                            workflow.viewer_min_scale,
+                        )
+                message = "独立窗口或原缩略图放大后的媒体查看器状态"
             return ValidationResult(
                 status="passed" if passed else "not_met", message=message
             )
@@ -578,9 +592,18 @@ class UiController:
                     settle_seconds=step.settle_seconds,
                 )
             else:
+
+                def close_viewer() -> None:
+                    current_surface = self.driver.current_surface()
+                    if current_surface.surface_id == source.surface.surface_id:
+                        # before 已验证放大图；按 Escape 后仍须验证恢复原预览。
+                        self.driver.close_viewer(source.surface, allow_embedded=True)
+                    else:
+                        self.driver.close_viewer(source.surface)
+
                 self.platform_step(
                     "close_viewer",
-                    lambda: self.driver.close_viewer(source.surface),
+                    close_viewer,
                     name=name,
                     before=before,
                     verify=verify,

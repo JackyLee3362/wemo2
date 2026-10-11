@@ -17,3 +17,7 @@ def configure_airtest_logging() -> None:
     airtest_logger = logging.getLogger("airtest")
     airtest_logger.handlers = [AirtestLogHandler()]
     airtest_logger.propagate = False
+    logging.captureWarnings(True)
+    warning_logger = logging.getLogger("py.warnings")
+    warning_logger.handlers = [AirtestLogHandler()]
+    warning_logger.propagate = False

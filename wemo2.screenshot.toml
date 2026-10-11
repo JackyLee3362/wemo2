@@ -4,6 +4,8 @@ log_file = "logs/wemo2.log"
 log_level = "INFO"
 
 [collector_options]
+resource_dir = "data/moments"
+account = "default"
 platform = "windows"
 window_title = "微信"
 screenshot_dir = "data/screenshot"

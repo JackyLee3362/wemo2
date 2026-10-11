@@ -25,6 +25,7 @@ class RouteSpec(BaseModel):
     name: str = Field(min_length=1)
     source: str
     destination: str
+    alternate_destinations: list[str] = Field(default_factory=list)
     target: str
     verified: bool = True
     follow_foreground: bool = False
@@ -174,6 +175,9 @@ class UiProfile(BaseModel):
             destination = self.get_page(route.destination)
             if route.verified and not destination.required:
                 raise ValueError("验证型路由的目标页必须有页面标志")
+            for alternate in route.alternate_destinations:
+                if not route.verified or not self.get_page(alternate).required:
+                    raise ValueError("路由的恢复页面必须有可验证的页面标志")
         for workflow in self.media_workflows.values():
             workflow.validate_steps()
             if (
@@ -300,6 +304,8 @@ def build_profile() -> UiProfile:
                 name="discover",
                 source="home",
                 destination="discover",
+                # 微信可恢复上次打开的子页面，不一定停在未选中朋友圈的发现菜单。
+                alternate_destinations=["moments_selected"],
                 target="moments_entry",
             ),
             "moments_entry": RouteSpec(

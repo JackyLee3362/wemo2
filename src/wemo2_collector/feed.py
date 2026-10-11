@@ -79,6 +79,7 @@ class FeedCapture:
         self.partial_start = True
         self.media = media
         self.stream_height = 0
+        self.segment_offset = 0
 
     def _image(self, frame: Screenshot, region: Rect) -> Image.Image:
         with Image.open(frame.image_path) as image:
@@ -104,6 +105,8 @@ class FeedCapture:
         segment = FeedSegment(
             image_path=path,
             source_frames=list(self.pending_frames),
+            stream_start=self.segment_offset,
+            stream_end=self.segment_offset + height,
             partial_start=self.partial_start,
             partial_end=anchor is None,
             end_anchor=anchor,
@@ -111,6 +114,7 @@ class FeedCapture:
             nickname_score=None if nickname is None else nickname.score,
         )
         self.result.segments.append(segment)
+        self.segment_offset += height
         self.paths.append(path)
         remainder = self.pending.crop(
             (0, height, self.pending.width, self.pending.height)
@@ -176,10 +180,6 @@ class FeedCapture:
                     break
                 self.stream_height += shift
                 self._append(frame, image, region, anchors, shift)
-                if self.media is not None:
-                    self.media.process(
-                        frame, region, anchors, self.stream_height - image.height
-                    )
                 if (
                     not anchors
                     and index == 0
@@ -187,6 +187,10 @@ class FeedCapture:
                 ):
                     self.result.stop_reason = "anchor_missing"
                     break
+                if self.media is not None:
+                    self.media.process(
+                        frame, region, anchors, self.stream_height - image.height
+                    )
                 if index + 1 == self.config.max_screens:
                     self.result.stop_reason = "max_screens"
                     break

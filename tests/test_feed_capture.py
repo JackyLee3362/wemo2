@@ -381,6 +381,28 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(card["status"], "failed")
         self.assertEqual(card["media"], [])
 
+    def test_visible_media_of_long_post_is_saved_before_end_anchor_appears(self):
+        media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
+        media.reader = MagicMock()
+        media.reader.nickname.return_value = None
+        with (
+            patch(
+                "wemo2_collector.media.media_tiles",
+                return_value=[Rect(x=70, y=50, width=80, height=80)],
+            ),
+            patch.object(media, "_save_media") as save,
+        ):
+            save.return_value = self.make_media_capture()._save_media(
+                self.first, Rect(x=10, y=40, width=80, height=80), 40
+            )
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        save.assert_called_once()
+        metadata = list(media.directory.glob("card*.json"))
+        self.assertEqual(len(metadata), 1)
+        card = json.loads(metadata[0].read_text(encoding="utf-8"))
+        self.assertTrue(card["partial_end"])
+        self.assertEqual(len(card["media"]), 1)
+
     def test_image_file_validation_rejects_non_media(self):
         self.assertEqual(file_kind(self.first.image_path), "image")
         bad = self.path / "fake.jpg"

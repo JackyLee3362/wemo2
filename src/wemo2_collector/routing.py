@@ -43,9 +43,12 @@ class PageRouter:
         final_route: RouteSpec | None = None,
     ) -> Screenshot:
         self.last_result = None
+        self.profile.validate_structure()
         frame = self.controller.capture()
         current = self.detect(frame)
         if current == destination:
+            return frame
+        if final_route is not None and current in final_route.alternate_destinations:
             return frame
         if current == "unknown":
             raise RuntimeError("当前页面未可靠识别，未执行导航")
@@ -58,9 +61,14 @@ class PageRouter:
             if not route.verified and (require_verified or index != len(steps) - 1):
                 raise ValueError("路径包含未验证页面，不能继续导航")
         for route in steps:
+            alternate_pages = route.alternate_destinations
+            if final_route is None and route.destination == destination:
+                alternate_pages = []  # ensure 精确页面，不能把恢复子页面当作该页面。
             result = self.controller.click(
                 route.target,
-                Expectation(kind="page", page=route.destination),
+                Expectation(
+                    kind="page", page=route.destination, alternate_pages=alternate_pages
+                ),
                 source_page=route.source,
                 timeout=self.config.timeout_seconds,
                 settle_seconds=route.settle_seconds,
@@ -74,4 +82,13 @@ class PageRouter:
             if route.verified and result.status != "verified":
                 raise RuntimeError("目标页面未通过验证，不能继续导航")
             frame = result.after
+            actual = (
+                None if result.validation is None else result.validation.actual_page
+            )
+            if actual == destination:
+                return frame
+            if route == final_route and actual in alternate_pages:
+                return frame
+            if route.verified and actual is not None and actual != route.destination:
+                raise RuntimeError(f"已到恢复页面 {actual}，后续路径不适用，未继续输入")
         return frame

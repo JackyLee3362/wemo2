@@ -105,12 +105,15 @@ def evaluate(
         if expectation.page is None:
             raise ValueError("页面预期必须指定 page")
         page = profile.get_page(expectation.page)
+        for alternate in expectation.alternate_pages:
+            if not profile.get_page(alternate).required:
+                raise ValueError("恢复页面尚无验证特征，不能用作动作成功条件")
         if not page.required:
             return ValidationResult(
                 status="unavailable", message=f"页面 {page.name} 尚无验证特征"
             )
         actual = detect_page(after, profile, locator)
-        if actual == page.name:
+        if actual == page.name or actual in expectation.alternate_pages:
             return ValidationResult(
                 status="passed", message=f"页面 {actual} 已验证", actual_page=actual
             )

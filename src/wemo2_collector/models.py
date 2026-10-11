@@ -88,6 +88,9 @@ class Expectation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     kind: Literal["page", "change"]
     page: str | None = None  # page 预期的注册页面名称。
+    alternate_pages: list[str] = Field(
+        default_factory=list
+    )  # 路由声明的恢复页面，同样须验证。
     region: Rect | None = None  # change 预期的截图局部区域，空值表示整幅图。
     change_threshold: float = Field(default=0.01, gt=0, le=1)
 
@@ -95,7 +98,7 @@ class Expectation(BaseModel):
     def check_expectation(self):
         if self.kind == "page" and (not self.page or self.region is not None):
             raise ValueError("页面预期需要非空 page，不使用截图区域")
-        if self.kind == "change" and self.page is not None:
+        if self.kind == "change" and (self.page is not None or self.alternate_pages):
             raise ValueError("变化预期不使用 page")
         return self
 
@@ -140,7 +143,7 @@ class FeedCaptureConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     enabled: bool = False
-    region: Rect | None = None  # 未指定时保存整窗；配置列表区域可去除侧栏和页头。
+    region: Rect | None = None  # 未指定时使用 UiProfile 和 DPI 推算列表区域。
     max_screens: int = Field(default=20, ge=1, le=100, strict=True)
     wheel_steps: int = Field(default=1, ge=1, le=10, strict=True)
     settle_seconds: float = Field(default=0.6, ge=0, le=10)
@@ -157,6 +160,8 @@ class FeedSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
     image_path: Path
     source_frames: list[str]
+    stream_start: int = Field(default=0, ge=0)  # 本次列表流中的起点，不是微信动态 ID。
+    stream_end: int = Field(default=0, ge=0)  # 同流坐标关联跨屏下载的媒体。
     partial_start: bool
     partial_end: bool
     end_anchor: LocatedTarget | None = None

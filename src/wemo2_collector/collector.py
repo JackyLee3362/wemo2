@@ -4,6 +4,7 @@ from pathlib import Path
 
 from wemo2.interfaces import BaseCollector
 from wemo2.models import Observation
+from wemo2_collector.archive import MomentArchive
 from wemo2_collector.config import WindowsCollectorConfig
 from wemo2_collector.controller import UiController
 from wemo2_collector.feed import FeedCapture
@@ -41,11 +42,13 @@ class WindowsScreenshotCollector(BaseCollector):
         self.router = PageRouter(self.controller, self.profile, config.route)
         self.feed: FeedCapture | None = None
         self.media: MediaCapture | None = None
+        self.archive: MomentArchive | None = None
 
     def collect(self) -> list[Observation]:
         self.controller.reset()
         self.feed = None
         self.media = None
+        self.archive = None
         try:
             self.driver.attach()
             if self.config.route.target == "none":
@@ -63,7 +66,14 @@ class WindowsScreenshotCollector(BaseCollector):
                     self.config.screenshot_dir,
                     self.media,
                 )
-                self.feed.run(frame)
+                try:
+                    self.feed.run(frame)
+                finally:
+                    if self.media is not None and self.feed.result.segments:
+                        self.archive = MomentArchive(
+                            self.config.resource_dir, self.config.account
+                        )
+                        self.archive.export(self.feed.result, self.media)
             return []  # 当前只交付界面证据，尚未识别朋友圈动态。
         finally:
             self.driver.close()
@@ -74,6 +84,8 @@ class WindowsScreenshotCollector(BaseCollector):
             paths.extend(self.feed.paths)
         if self.media is not None:
             paths.extend(self.media.paths)
+        if self.archive is not None:
+            paths.extend(self.archive.paths)
         return paths
 
     def stop(self) -> None:

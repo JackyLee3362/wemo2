@@ -50,6 +50,7 @@ class SavedPreview(BaseModel):
     bounds: Rect
     stream_y: int
     file: SavedMedia
+    workflow_complete: bool = True  # 已保存文件可能在返回列表失败后留存，不能继续复用。
 
 
 class MediaCapture:
@@ -69,6 +70,7 @@ class MediaCapture:
         self.saved: dict[str, SavedMedia] = {}
         self.previews: list[SavedPreview] = []
         self.last_saved: SavedMedia | None = None
+        self.errors: list[str] = []
 
     def _save_media(
         self, source: Screenshot, bounds: Rect, stream_y: int
@@ -86,6 +88,8 @@ class MediaCapture:
         if key in self.saved:
             return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
         for preview in self.previews:
+            if not preview.workflow_complete:
+                continue
             tolerance = max(1, round(2 * source.surface.scale))
             if (
                 abs(preview.stream_y - stream_y) > tolerance
@@ -99,9 +103,10 @@ class MediaCapture:
             ):
                 return preview.file
         saved = None
+        preview = None
 
         def on_file(path: Path) -> None:
-            nonlocal saved
+            nonlocal saved, preview
             kind = file_kind(path)
             with path.open("rb") as file:
                 digest = hashlib.file_digest(file, "sha256").hexdigest()
@@ -110,6 +115,14 @@ class MediaCapture:
             )
             self.paths.append(path)
             self.last_saved = saved
+            preview = SavedPreview(
+                source=source,
+                bounds=bounds,
+                stream_y=stream_y,
+                file=saved,
+                workflow_complete=False,
+            )
+            self.previews.append(preview)
 
         self.controller.run_media_workflow(
             source,
@@ -122,9 +135,7 @@ class MediaCapture:
         if saved is None:
             raise RuntimeError("媒体流程未交付验证过的文件")
         self.saved[key] = saved
-        self.previews.append(
-            SavedPreview(source=source, bounds=bounds, stream_y=stream_y, file=saved)
-        )
+        preview.workflow_complete = True
         return saved
 
     def process(
@@ -139,14 +150,20 @@ class MediaCapture:
 
         self.directory.mkdir(parents=True, exist_ok=True)
         top = region.y
+        boundaries = []
+        for anchor in anchors:
+            bottom = min(
+                region.y + region.height,
+                anchor.bounds.y
+                + anchor.bounds.height
+                + round(self.config.boundary_padding * frame.surface.scale),
+            )
+            boundaries.append(bottom)
+        # 未闭合的长动态也必须采集可见图片，否则滚出屏幕后会丢失前几排媒体。
+        if not boundaries or boundaries[-1] < region.y + region.height:
+            boundaries.append(region.y + region.height)
         with Image.open(frame.image_path) as full:
-            for index, anchor in enumerate(anchors):
-                bottom = min(
-                    region.y + region.height,
-                    anchor.bounds.y
-                    + anchor.bounds.height
-                    + round(self.config.boundary_padding * frame.surface.scale),
-                )
+            for index, bottom in enumerate(boundaries):
                 if bottom <= top:
                     continue
                 bounds = Rect(
@@ -158,6 +175,7 @@ class MediaCapture:
                     bounds=bounds,
                     screenshot=path,
                     partial_start=index == 0,
+                    partial_end=bottom == region.y + region.height,
                 )
                 self.last_saved = None
                 with full.crop(
@@ -199,6 +217,7 @@ class MediaCapture:
                         )
                         card.status = "failed"
                         card.error = str(error)
+                        self.errors.append(str(error))
                         if (
                             self.last_saved is not None
                             and self.last_saved not in card.media

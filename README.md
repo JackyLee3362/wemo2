@@ -364,3 +364,13 @@ height = 663
 Windows 实机调试的任务拆分、修复原因、验证结果和证据路径见
 [实机调试记录](doc/live-debug-report.md)。媒体缓存同时核对已验证的列表位置和预览图像，
 允许 DPI 舍入差异，仅在同一次连续采集中复用已保存文件。
+
+## 按账号归档朋友圈
+
+在 `[collector_options]` 中配置 `resource_dir = "data/moments"` 和 `account = "default"`。
+相对资源路径以配置文件所在目录为基准；将 account 改为本次备份账号。
+开启朋友圈采集后，输出为 `资源目录/账号/日期/朋友圈/post.json`、`screenshot.png` 和 `media/`。
+JSON 保存粗略日期、时间原文、人物、文案、截图和所有已关联的下载图片/视频。
+同账号按人物和完整文案合并；媒体按文件哈希去重，历次截图保留供核对。
+识别不完整的记录单独留痕，无法识别日期时使用 unknown_date。
+完整字段、目录结构与去重边界见 [朋友圈资源协议](doc/moment-resources.md)。

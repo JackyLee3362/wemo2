@@ -218,3 +218,27 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 
 应用与核心去重/存储接口不感知这些步骤。昵称和图像块布局仍保持原实现，未在本次扩展。
 窗口内查看器及视频专用界面仍需新的资源与实机样本；此重构不代表已验证其兼容性。
+
+## 9. 朋友圈资源归档
+
+`WindowsCollectorConfig` 新增 `resource_dir` 与 `account`。配置文件解析相对资源路径，
+组装入口负责创建 `MomentArchive`，核心 wemo2 不解释目录布局或截图字段。
+输出层级为资源根目录 → 备份账号 → 推断的发布日期 → 朋友圈身份键。
+
+`TextRecognizer.post_details` 识别人名、文案、时间原文；`dates.approximate_day`
+以截图时区推断到日。`records.py` 定义 Pydantic 数据契约与相对资源引用。
+`FeedSegment.stream_start/stream_end` 关联已拼接动态与 `SavedPreview.stream_y`，
+使跨屏媒体进入所属朋友圈，而不依赖可见卡片是否完整。
+MediaCapture 也处理尚未出现结尾锚点的可见尾段，避免长动态的上排媒体滚出窗口后遗漏。
+
+MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝媒体、最后原子替换 post.json。
+同账号的人物和完整文案用于本地归档去重；日期不参与身份键，媒体按实际字节哈希合并。
+未知人名或不完整文案不参与身份合并；未知日期保留 unknown_date。
+这是一条用户选择的本地留痕规则，未替代核心 Observation 的稳定源身份策略。
+失败保留已下载文件和错误信息，媒体总数未知时不声明 media_complete=true。
+目录协议详见 `doc/moment-resources.md`。
+
+发现入口可恢复微信上次打开的朋友圈子页面。`RouteSpec.alternate_destinations`
+在 UiProfile 声明允许的恢复页面，`Expectation.alternate_pages` 逐个验证其标志。
+当实际页面已是导航终点时，PageRouter 立即返回，跳过后续菜单点击。
+`ensure(page)` 仍要求精确页面，未配置标志的页面不能作为恢复成功条件。

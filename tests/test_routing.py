@@ -11,6 +11,7 @@ from wemo2_collector.controller import UiController
 from wemo2_collector.locating import AirtestLocator
 from wemo2_collector.models import (
     ControllerConfig,
+    Expectation,
     LocatedTarget,
     MatchConfig,
     Platform,
@@ -118,7 +119,13 @@ class RoutingTests(unittest.TestCase):
         driver.device.touch.assert_not_called()
         verify.assert_not_called()
 
-    def make_router(self, already_open=False, found=True, already_selected=False):
+    def make_router(
+        self,
+        already_open=False,
+        found=True,
+        already_selected=False,
+        restore_moments=False,
+    ):
         driver = MagicMock()
         driver.current_surface.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
@@ -130,7 +137,9 @@ class RoutingTests(unittest.TestCase):
             discover_visible = (
                 already_open or already_selected or driver.click.call_count > 0
             )
-            moments_selected = already_selected
+            moments_selected = (
+                already_selected or restore_moments and driver.click.call_count > 0
+            )
             for call in driver.click.call_args_list:
                 if call.args[1].name == "moments_menu":
                     moments_selected = True
@@ -343,6 +352,64 @@ class RoutingTests(unittest.TestCase):
             router.controller.driver.click.call_args_list[1].args[1].name,
             "moments_menu",
         )
+
+    def test_discovery_restores_moments_and_skips_redundant_menu_click(self):
+        router = self.make_router(restore_moments=True)
+        with patch("wemo2_collector.controller.time.sleep"):
+            self.assertEqual(router.run("moments_entry"), self.frame)
+        router.controller.driver.click.assert_called_once()
+        self.assertEqual(router.last_result.status, "verified")
+        self.assertEqual(router.last_result.validation.actual_page, "moments_selected")
+        self.assertEqual(
+            router.last_result.expectation.alternate_pages, ["moments_selected"]
+        )
+        self.assertTrue(router.last_result.executed)
+        self.assertIsNone(router.last_result.error)
+
+    def test_open_discovery_action_accepts_restored_child_but_ensure_stays_exact(self):
+        router = self.make_router(restore_moments=True)
+        with patch("wemo2_collector.controller.time.sleep"):
+            self.assertEqual(router.run("discover"), self.frame)
+        router.controller.driver.click.assert_called_once()
+        router = self.make_router(already_selected=True)
+        self.assertEqual(router.run("discover"), self.frame)
+        router.controller.driver.click.assert_not_called()
+        router = self.make_router(restore_moments=True)
+        with (
+            patch("wemo2_collector.controller.time.sleep"),
+            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "超时"):
+                router.ensure("discover")
+        router.controller.driver.click.assert_called_once()
+
+    def test_recovery_pages_are_explicit_and_unverified_pages_are_rejected(self):
+        locator = MagicMock()
+        with patch("wemo2_collector.validation.detect_page", return_value="home"):
+            checked = validation.evaluate(
+                self.frame,
+                self.frame,
+                Expectation(
+                    kind="page", page="discover", alternate_pages=["moments_selected"]
+                ),
+                self.profile,
+                locator,
+            )
+        self.assertEqual(checked.status, "not_met")
+        with self.assertRaisesRegex(ValueError, "恢复页面尚无"):
+            validation.evaluate(
+                self.frame,
+                self.frame,
+                Expectation(kind="page", page="discover", alternate_pages=["moments"]),
+                self.profile,
+                locator,
+            )
+        profile = self.profile.model_copy(deep=True)
+        profile.routes["discover"] = profile.routes["discover"].model_copy(
+            update={"alternate_destinations": ["missing"]}
+        )
+        with self.assertRaisesRegex(ValueError, "未定义页面"):
+            profile.validate_structure()
 
     def test_airtest_locator_handles_reference_dpi_conversion(self):
         locator = AirtestLocator(self.profile, "dark", MatchConfig())

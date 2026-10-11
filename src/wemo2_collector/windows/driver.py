@@ -338,6 +338,18 @@ class WindowsDriver(BaseDriver):
             time.sleep(0.2)
         raise RuntimeError("另存为后未观察到稳定的非空文件，未标记保存成功")
 
+    def is_save_dialog(self) -> bool:
+        """根据标准窗口类与标题验证另存为状态，不寻找或操作输入框。"""
+        from pywinauto import Desktop
+
+        self.verify_capture(self.current_surface())
+        dialog = (
+            Desktop(backend="win32").window(handle=self.device.handle).wrapper_object()
+        )
+        return dialog.class_name() == "#32770" and any(
+            word in dialog.window_text() for word in ("另存为", "保存", "Save")
+        )
+
     def close_viewer(self, original: Surface) -> None:
         """只在独立查看器窗口按一次 Escape，避免关闭主微信窗口。"""
         from wemo2_collector.windows.backend import create_device

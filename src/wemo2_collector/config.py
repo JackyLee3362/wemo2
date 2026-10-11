@@ -46,6 +46,8 @@ def load_windows_options(options: dict, directory: Path) -> dict:
         raise ValueError("windows_screenshot 采集器不支持 Android")
     profile = build_profile()
     profile.validate_theme(config.theme)
+    if config.feed.enabled and config.feed.save_media:
+        profile.media_workflow(config.feed.media_workflow)
     if config.route.target != "none":
         profile.get_route(config.route.target)
     path = config.screenshot_dir

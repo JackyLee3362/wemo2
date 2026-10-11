@@ -25,7 +25,7 @@ from wemo2_collector.models import (
     Surface,
     ValidationResult,
 )
-from wemo2_collector.profiles import build_profile
+from wemo2_collector.profiles import MediaTargetSpec, build_profile
 from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
 from wemo2_collector.windows.driver import WindowsDriver
 
@@ -305,40 +305,100 @@ class FeedCaptureTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(ValidationError):
                 FeedCaptureConfig.model_validate(options)
 
-    def test_media_save_flow_checks_real_file_then_returns_to_list(self):
-        media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
+    def make_media_capture(self):
+        state = {"page": "original"}
+        profile = build_profile()
+        workflow = profile.media_workflow("save_media")
+        for name, step in workflow.steps.items():
+            workflow.steps[name] = step.model_copy(
+                update={"timeout_seconds": 0.01, "settle_seconds": 0}
+            )
+        driver = MagicMock()
+        frames = {
+            "original": self.first,
+            "viewer": self.second.model_copy(
+                update={
+                    "surface": self.surface.model_copy(update={"surface_id": "viewer"})
+                }
+            ),
+            "menu": self.second.model_copy(
+                update={
+                    "surface": self.surface.model_copy(update={"surface_id": "viewer"})
+                }
+            ),
+            "dialog": self.second.model_copy(
+                update={
+                    "surface": self.surface.model_copy(update={"surface_id": "dialog"})
+                }
+            ),
+        }
+        controller = UiController(
+            driver,
+            MagicMock(),
+            MagicMock(),
+            profile,
+            ControllerConfig(capture_attempts=1, locate_attempts=1),
+            self.path / "actions",
+        )
+        controller.capture = MagicMock(
+            side_effect=lambda **kwargs: frames[state["page"]].model_copy(
+                update={"captured_at": datetime.now(UTC)}
+            )
+        )
+
+        def click(frame, target):
+            state["page"] = "viewer" if state["page"] == "original" else "dialog"
+
+        def right_click(frame, target):
+            state["page"] = "menu"
+
+        def save(directory):
+            state["page"] = "viewer"
+            return self.second.image_path
+
+        def close(original):
+            state["page"] = "original"
+
+        driver.click.side_effect = click
+        driver.right_click.side_effect = right_click
+        driver.save_dialog.side_effect = save
+        driver.close_viewer.side_effect = close
+        driver.is_save_dialog.side_effect = lambda: state["page"] == "dialog"
+        media = MediaCapture(controller, FeedCaptureConfig(), self.path)
         media.reader = MagicMock()
         media.reader.read.return_value = [
             TextLine(
                 text="另存为", score=0.99, bounds=Rect(x=10, y=20, width=70, height=20)
             )
         ]
-        self.controller.capture.return_value = self.first
-        viewer = self.second.model_copy(
-            update={"surface": self.surface.model_copy(update={"surface_id": "viewer"})}
-        )
-        action = ActionResult(
-            operation="click",
-            name="media",
-            status="executed",
-            attempted=True,
-            executed=True,
-            after=viewer,
-        )
-        self.controller.click_region.return_value = action
-        self.controller.platform_step.side_effect = [self.second.image_path, None]
+        sleep = patch("wemo2_collector.controller.time.sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+        return media
+
+    def test_media_save_flow_checks_real_file_then_returns_to_list(self):
+        media = self.make_media_capture()
         saved = media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
         self.assertEqual(saved.kind, "image")
         self.assertEqual(saved.size, self.second.image_path.stat().st_size)
         self.assertEqual(len(saved.sha256), 64)
-        self.assertEqual(self.controller.click_region.call_count, 3)
+        driver = media.controller.driver
+        self.assertEqual(driver.click.call_count, 2)
+        driver.right_click.assert_called_once()
+        driver.save_dialog.assert_called_once()
+        driver.close_viewer.assert_called_once()
         self.assertEqual(
-            self.controller.click_region.call_args_list[1].kwargs,
-            {"right": True, "follow_foreground": True},
+            [result.name for result in media.controller.results],
+            [
+                "open_viewer",
+                "open_menu",
+                "choose_save_as",
+                "write_file",
+                "return_to_feed",
+            ],
         )
-        self.assertEqual(
-            [call.args[0] for call in self.controller.platform_step.call_args_list],
-            ["save_file", "close_viewer"],
+        self.assertTrue(
+            all(result.status == "verified" for result in media.controller.results)
         )
 
     def test_changed_media_content_cannot_be_clicked(self):
@@ -349,20 +409,16 @@ class FeedCaptureTests(unittest.TestCase):
         self.controller.click_region.assert_not_called()
 
     def test_unrecognized_menu_does_not_guess_save_coordinates(self):
-        media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
-        media.reader = MagicMock()
+        media = self.make_media_capture()
         media.reader.read.return_value = []
-        self.controller.capture.return_value = self.first
-        viewer = self.second.model_copy(
-            update={"surface": self.surface.model_copy(update={"surface_id": "viewer"})}
-        )
-        self.controller.click_region.return_value = ActionResult(
-            operation="click", name="media", status="executed", after=viewer
-        )
         with self.assertRaisesRegex(RuntimeError, "未唯一识别"):
             media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
-        self.assertEqual(self.controller.click_region.call_count, 2)
-        self.controller.platform_step.assert_not_called()
+        driver = media.controller.driver
+        driver.click.assert_called_once()
+        driver.right_click.assert_called_once()
+        driver.save_dialog.assert_not_called()
+        self.assertTrue(media.controller.results[-1].executed)
+        self.assertEqual(media.controller.results[-1].status, "failed")
 
     def test_standard_save_dialog_with_ambiguous_edits_does_not_type(self):
         driver = WindowsDriver()
@@ -487,3 +543,123 @@ class FeedCaptureTests(unittest.TestCase):
         ):
             driver.follow_foreground()
         create.assert_called_once_with(handle=456, foreground=False)
+
+    def test_media_targets_and_workflow_can_change_without_executor_branches(self):
+        media = self.make_media_capture()
+        profile = media.controller.profile
+        workflow = profile.media_workflow("save_media")
+        profile.media_targets["custom_export"] = MediaTargetSpec(
+            kind="ocr",
+            texts=["导出原文件"],
+            threshold=0.95,
+            region=(0.1, 0.1, 0.8, 0.8),
+        )
+        profile.media_targets["custom_preview"] = profile.media_targets.pop(
+            "media_preview"
+        )
+        workflow.steps["open_viewer"] = workflow.steps["open_viewer"].model_copy(
+            update={"target": "custom_preview"}
+        )
+        workflow.steps["choose_save_as"] = workflow.steps["choose_save_as"].model_copy(
+            update={"target": "custom_export"}
+        )
+        profile.media_workflows["save_media"] = workflow.model_copy(
+            update={"menu_target": "custom_export"}
+        )
+        profile.media_workflows["custom_flow"] = profile.media_workflows["save_media"]
+        media.config = media.config.model_copy(update={"media_workflow": "custom_flow"})
+        media.reader.read.return_value = [
+            TextLine(
+                text="导出原文件",
+                score=0.99,
+                bounds=Rect(x=10, y=20, width=70, height=20),
+            )
+        ]
+        media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        chosen = media.controller.driver.click.call_args_list[1].args[1]
+        self.assertEqual(chosen.bounds.x, 30)
+        self.assertEqual(chosen.bounds.y, 50)
+        self.assertEqual(chosen.name, "custom_export")
+        self.assertTrue(
+            all(result.workflow == "custom_flow" for result in media.controller.results)
+        )
+
+    def test_invalid_workflow_references_and_cycles_are_rejected_before_input(self):
+        for change in (
+            {"next": "missing"},
+            {"next": "open_viewer"},
+            {"target": "missing"},
+            {"before": "viewer"},
+        ):
+            with self.subTest(change=change):
+                media = self.make_media_capture()
+                profile = media.controller.profile
+                workflow = profile.media_workflow("save_media")
+                workflow.steps["open_viewer"] = workflow.steps[
+                    "open_viewer"
+                ].model_copy(update=change)
+                with self.assertRaises(ValueError):
+                    media.controller.run_media_workflow(
+                        self.first,
+                        Rect(x=10, y=40, width=80, height=80),
+                        self.path,
+                        media.reader,
+                        MagicMock(),
+                    )
+                media.controller.driver.click.assert_not_called()
+                media.controller.driver.right_click.assert_not_called()
+
+    def test_invalid_region_and_unknown_workflow_fail_configuration_validation(self):
+        with self.assertRaises(ValidationError):
+            MediaTargetSpec(kind="region", region=(0.9, 0, 0.5, 1))
+        from wemo2.config import AppConfig
+
+        with self.assertRaises(ValidationError):
+            AppConfig(
+                collector="windows_screenshot",
+                collector_options={
+                    "feed": {"enabled": True, "media_workflow": "missing"}
+                },
+            )
+
+    def test_save_dialog_not_recognized_prevents_filename_input(self):
+        media = self.make_media_capture()
+        media.controller.driver.is_save_dialog.return_value = False
+        media.controller.driver.is_save_dialog.side_effect = None
+        with self.assertRaisesRegex(RuntimeError, "对话框状态"):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        media.controller.driver.save_dialog.assert_not_called()
+        self.assertEqual(media.controller.driver.click.call_count, 2)
+        self.assertTrue(media.controller.results[-1].executed)
+
+    def test_media_save_exception_preserves_attempt_without_repeating_input(self):
+        media = self.make_media_capture()
+        media.controller.driver.save_dialog.side_effect = OSError("保存调用失败")
+        with self.assertRaisesRegex(RuntimeError, "保存调用失败"):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        media.controller.driver.save_dialog.assert_called_once()
+        media.controller.driver.close_viewer.assert_not_called()
+        result = media.controller.results[-1]
+        self.assertTrue(result.attempted)
+        self.assertFalse(result.executed)
+        self.assertEqual(result.status, "failed")
+
+    def test_return_failure_keeps_verified_file_and_executed_action(self):
+        media = self.make_media_capture()
+        media.controller.driver.close_viewer.side_effect = None
+        with self.assertRaisesRegex(RuntimeError, "返回原列表"):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        self.assertIsNotNone(media.last_saved)
+        self.assertEqual(media.last_saved.path, self.second.image_path)
+        self.assertIn(self.second.image_path, media.paths)
+        media.controller.driver.close_viewer.assert_called_once()
+        result = media.controller.results[-1]
+        self.assertTrue(result.executed)
+        self.assertEqual(result.status, "failed")
+        persisted = json.loads(
+            (self.path / "actions" / f"action_{result.action_id}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(persisted["workflow"], "save_media")
+        self.assertTrue(persisted["executed"])

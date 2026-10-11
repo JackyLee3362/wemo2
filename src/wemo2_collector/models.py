@@ -119,6 +119,7 @@ class ActionResult(BaseModel):
         "click", "right_click", "swipe", "scroll", "save_file", "close_viewer"
     ]
     name: str  # 语义目标名，不保存固定屏幕点击位置。
+    workflow: str | None = None  # 媒体流程注册名；name 为该流程中的步骤名。
     status: Literal["executed", "verified", "pending", "failed"] = "failed"
     attempted: bool = False  # 已调用平台动作；抛错时可能部分执行，禁止自动重发。
     executed: bool = False  # 平台调用正常返回，不等于页面已经验证。
@@ -147,6 +148,7 @@ class FeedCaptureConfig(BaseModel):
     boundary_padding: int = Field(default=8, ge=0, le=100, strict=True)
     recognize_nickname: bool = True
     save_media: bool = True
+    media_workflow: str = Field(default="save_media", min_length=1)
 
 
 class FeedSegment(BaseModel):

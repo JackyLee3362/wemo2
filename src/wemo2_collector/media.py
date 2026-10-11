@@ -8,7 +8,7 @@ from uuid import uuid4
 from PIL import Image, ImageChops
 from pydantic import BaseModel, ConfigDict, Field
 
-from wemo2_collector.controller import UiActionError, UiController
+from wemo2_collector.controller import UiController
 from wemo2_collector.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
 from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
 
@@ -59,13 +59,6 @@ class MediaCapture:
         self.saved: dict[str, SavedMedia] = {}
         self.last_saved: SavedMedia | None = None
 
-    def _check(self, action):
-        if action.status == "failed":
-            raise UiActionError(action)
-        if action.after is None:
-            raise RuntimeError("媒体动作没有交付截图")
-        return action.after
-
     def _save_media(
         self, source: Screenshot, bounds: Rect, stream_y: int
     ) -> SavedMedia:
@@ -85,57 +78,29 @@ class MediaCapture:
                 key = f"{stream_y}:{hashlib.sha256(first.tobytes()).hexdigest()}"
         if key in self.saved:
             return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
-        viewer = self._check(
-            self.controller.click_region(
-                "media_preview", bounds, follow_foreground=True
+        saved = None
+
+        def on_file(path: Path) -> None:
+            nonlocal saved
+            kind = file_kind(path)
+            with path.open("rb") as file:
+                digest = hashlib.file_digest(file, "sha256").hexdigest()
+            saved = SavedMedia(
+                path=path, kind=kind, sha256=digest, size=path.stat().st_size
             )
+            self.paths.append(path)
+            self.last_saved = saved
+
+        self.controller.run_media_workflow(
+            source,
+            bounds,
+            self.directory / "media",
+            self.reader,
+            on_file,
+            workflow_name=self.config.media_workflow,
         )
-        if viewer.surface.surface_id == source.surface.surface_id:
-            raise RuntimeError("媒体未打开独立查看器，停止后续输入")
-        area = Rect(
-            x=viewer.surface.bounds.width // 3,
-            y=viewer.surface.bounds.height // 3,
-            width=max(1, viewer.surface.bounds.width // 3),
-            height=max(1, viewer.surface.bounds.height // 3),
-        )
-        menu = self._check(
-            self.controller.click_region(
-                "media_context", area, right=True, follow_foreground=True
-            )
-        )
-        with Image.open(menu.image_path) as image:
-            lines = self.reader.read(image)
-        matches = []
-        for line in lines:
-            if line.score >= 0.8 and line.text.replace(" ", "").rstrip(".。…") in (
-                "另存为",
-                "保存视频",
-                "Saveas",
-            ):
-                matches.append(line)
-        if len(matches) != 1:
-            raise RuntimeError("未唯一识别到另存为菜单，停止输入并保留截图")
-        self._check(
-            self.controller.click_region(
-                "save_as", matches[0].bounds, follow_foreground=True
-            )
-        )
-        path = self.controller.platform_step(
-            "save_file",
-            lambda: self.controller.driver.save_dialog(self.directory / "media"),
-        )
-        kind = file_kind(path)
-        saved = SavedMedia(
-            path=path,
-            kind=kind,
-            sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-            size=path.stat().st_size,
-        )
-        self.paths.append(path)
-        self.last_saved = saved
-        self.controller.platform_step(
-            "close_viewer", lambda: self.controller.driver.close_viewer(source.surface)
-        )
+        if saved is None:
+            raise RuntimeError("媒体流程未交付验证过的文件")
         self.saved[key] = saved
         return saved
 

@@ -59,6 +59,10 @@ class BaseDriver(ABC):
         """在已验证的同进程另存为对话框中保存唯一文件，返回实际路径。"""
         raise NotImplementedError("当前平台尚未实现另存为")
 
+    def is_save_dialog(self) -> bool:
+        """只读检查当前窗口是否为保存对话框，不输入文件名。"""
+        return False
+
     def close_viewer(self, original: Surface) -> None:
         """关闭本次打开的查看器并确认回到原列表窗口。"""
         raise NotImplementedError("当前平台尚未实现返回列表")

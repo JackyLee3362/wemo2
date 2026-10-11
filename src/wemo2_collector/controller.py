@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from loguru import logger
+from PIL import Image, ImageChops
 
 from wemo2_collector import validation
 from wemo2_collector.interfaces import BaseDriver
@@ -19,8 +20,10 @@ from wemo2_collector.models import (
     LocatedTarget,
     Rect,
     Screenshot,
+    ValidationResult,
 )
-from wemo2_collector.profiles import UiProfile
+from wemo2_collector.profiles import MediaStepSpec, UiProfile
+from wemo2_collector.recognition import TextRecognizer
 from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
 
@@ -147,14 +150,20 @@ class UiController:
         )
 
     def _prepare(
-        self, result: ActionResult, source_page: str | None, region: Rect | None = None
+        self,
+        result: ActionResult,
+        source_page: str | None,
+        region: Rect | None = None,
+        locate_target: Callable[[Screenshot], LocatedTarget | None] | None = None,
     ) -> tuple[Screenshot, LocatedTarget]:
         for attempt in range(self.config.locate_attempts):
             frame = self.capture()
             result.before = frame
             if source_page is not None and self.detect_page(frame) != source_page:
                 raise RuntimeError(f"动作前页面不再是 {source_page}，未执行点击")
-            if region is None:
+            if locate_target is not None:
+                target = locate_target(frame)
+            elif region is None:
                 target = self.locate(result.name, frame)
             else:
                 target = LocatedTarget(
@@ -185,8 +194,16 @@ class UiController:
         follow_foreground: bool = False,
         region: Rect | None = None,
         wheel_steps: int | None = None,
+        locate_target: Callable[[Screenshot], LocatedTarget | None] | None = None,
+        verify: Callable[[Screenshot], ValidationResult] | None = None,
+        workflow_name: str | None = None,
     ) -> ActionResult:
-        result = ActionResult(operation=operation, name=name, expectation=expectation)
+        result = ActionResult(
+            operation=operation,
+            name=name,
+            expectation=expectation,
+            workflow=workflow_name,
+        )
         evidence_start = len(self._artifacts)
         timeout = self.config.verification_timeout if timeout is None else timeout
         try:
@@ -214,7 +231,7 @@ class UiController:
                 if type(wheel_steps) is not int or not 1 <= wheel_steps <= 10:
                     raise ValueError("滚轮步数必须为 1 到 10 的整数")
                 result.wheel_steps = wheel_steps
-            before, target = self._prepare(result, source_page, region)
+            before, target = self._prepare(result, source_page, region, locate_target)
             if expectation is not None:
                 # 先确认验证规则和区域合法，不能输入后才发现配置错误。
                 validation.evaluate(
@@ -234,7 +251,7 @@ class UiController:
             result.executed = True
             result.status = "executed"
             time.sleep(settle_seconds)
-            self._observe(result, timeout, follow_foreground)
+            self._observe(result, timeout, follow_foreground, verify)
         except Exception as error:
             logger.exception(
                 "界面动作 {} 失败；已尝试 {}，已执行 {}：{}",
@@ -249,17 +266,24 @@ class UiController:
         return self._finish(result)
 
     def _observe(
-        self, result: ActionResult, timeout: float, follow_foreground: bool
+        self,
+        result: ActionResult,
+        timeout: float,
+        follow_foreground: bool,
+        verify: Callable[[Screenshot], ValidationResult] | None = None,
     ) -> None:
         deadline = time.monotonic() + timeout
         while True:
             after = self.capture(follow_foreground=follow_foreground)
             result.after = after
-            if result.expectation is None:
+            if verify is not None:
+                checked = verify(after)
+            elif result.expectation is None:
                 return  # 只有平台执行事实，没有页面成功结论。
-            checked = validation.evaluate(
-                result.before, after, result.expectation, self.profile, self.locator
-            )
+            else:
+                checked = validation.evaluate(
+                    result.before, after, result.expectation, self.profile, self.locator
+                )
             result.validation = checked
             if checked.status == "passed":
                 result.status = "verified"
@@ -337,21 +361,38 @@ class UiController:
         )
 
     def platform_step(
-        self, operation: Literal["save_file", "close_viewer"], action: Callable
+        self,
+        operation: Literal["save_file", "close_viewer"],
+        action: Callable,
+        *,
+        name: str | None = None,
+        before: Callable[[Screenshot], None] | None = None,
+        verify_file: Callable[[Path], None] | None = None,
+        verify: Callable[[Screenshot], ValidationResult] | None = None,
+        timeout: float = 5,
+        workflow_name: str | None = None,
     ) -> object:
         """记录一次平台对话框操作，失败保留执行事实，不自动重发。"""
-        result = ActionResult(operation=operation, name=operation)
+        result = ActionResult(
+            operation=operation, name=name or operation, workflow=workflow_name
+        )
         start = len(self._artifacts)
         value = None
         try:
             result.before = self.capture(follow_foreground=True)
+            if before is not None:
+                before(result.before)
             result.attempted = True
             value = action()
             result.executed = True
             result.status = "executed"
             if isinstance(value, Path) and value.is_file():
                 self._artifacts.append(value)
-            result.after = self.capture(follow_foreground=True)
+            if verify_file is not None:
+                if not isinstance(value, Path):
+                    raise RuntimeError("保存步骤未返回文件路径")
+                verify_file(value)
+            self._observe(result, timeout, True, verify)
         except Exception as error:
             logger.exception("媒体平台步骤 {} 失败，停止后续输入：{}", operation, error)
             result.error = str(error)
@@ -361,3 +402,199 @@ class UiController:
         if result.status == "failed":
             raise UiActionError(result)
         return value
+
+    def _media_target(
+        self,
+        frame: Screenshot,
+        name: str,
+        source: Screenshot,
+        bounds: Rect,
+        reader: TextRecognizer,
+    ) -> LocatedTarget | None:
+        """解析配置中的动态、相对区域或文字目标，所有结果属于当前帧。"""
+        spec = self.profile.media_target(name)
+        if spec.kind == "source":
+            if frame.surface != source.surface:
+                raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
+            box = (
+                bounds.x,
+                bounds.y,
+                bounds.x + bounds.width,
+                bounds.y + bounds.height,
+            )
+            with (
+                Image.open(source.image_path) as old,
+                Image.open(frame.image_path) as current,
+            ):
+                with (
+                    old.crop(box).convert("RGB") as first,
+                    current.crop(box).convert("RGB") as second,
+                ):
+                    with ImageChops.difference(first, second) as difference:
+                        if difference.getbbox() is not None:
+                            raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
+            area = bounds
+        else:
+            x, y, width, height = spec.region
+            size = frame.surface.bounds
+            left = min(size.width - 1, round(size.width * x))
+            top = min(size.height - 1, round(size.height * y))
+            area = Rect(
+                x=left,
+                y=top,
+                width=min(size.width - left, max(1, round(size.width * width))),
+                height=min(size.height - top, max(1, round(size.height * height))),
+            )
+        if spec.kind != "ocr":
+            return LocatedTarget(
+                frame_id=frame.frame_id,
+                name=name,
+                bounds=area,
+                score=1,
+                method="configured_region",
+            )
+        with Image.open(frame.image_path) as image:
+            with image.crop(
+                (area.x, area.y, area.x + area.width, area.y + area.height)
+            ) as crop:
+                lines = reader.read(crop)
+        matches = []
+        for line in lines:
+            text = line.text.replace(" ", "").rstrip(".。…")
+            for candidate in spec.texts:
+                if line.score >= spec.threshold and text == candidate.replace(
+                    " ", ""
+                ).rstrip(".。…"):
+                    matches.append(line)
+                    break
+        if len(matches) != 1:
+            return None
+        line = matches[0]
+        return LocatedTarget(
+            frame_id=frame.frame_id,
+            name=name,
+            bounds=Rect(
+                x=area.x + line.bounds.x,
+                y=area.y + line.bounds.y,
+                width=line.bounds.width,
+                height=line.bounds.height,
+            ),
+            score=line.score,
+            method="ocr",
+        )
+
+    def run_media_workflow(
+        self,
+        source: Screenshot,
+        bounds: Rect,
+        directory: Path,
+        reader: TextRecognizer,
+        on_file: Callable[[Path], None],
+        *,
+        workflow_name: str = "save_media",
+    ) -> Path:
+        """执行已校验的媒体步骤图；每次输入仅执行一次，验证失败即停止并留证。"""
+        self.profile.validate_structure()
+        workflow = self.profile.media_workflow(workflow_name)
+        path = None
+
+        def check(frame: Screenshot, state: str) -> ValidationResult:
+            if state == "menu":
+                matched = self._media_target(
+                    frame, workflow.menu_target, source, bounds, reader
+                )
+                passed = matched is not None
+                message = "另存为菜单已验证" if passed else "未唯一识别到媒体菜单目标"
+            elif state == "save_dialog":
+                passed = self.driver.is_save_dialog()
+                message = "另存为对话框状态"
+            elif state == "original":
+                passed = frame.surface == source.surface
+                if passed:
+                    self._media_target(
+                        frame,
+                        workflow.steps[workflow.entry].target,
+                        source,
+                        bounds,
+                        reader,
+                    )
+                message = "返回原列表及内容连续性"
+            else:
+                passed = (
+                    frame.surface.surface_id != source.surface.surface_id
+                    and not self.driver.is_save_dialog()
+                )
+                message = "独立媒体查看器状态"
+            return ValidationResult(
+                status="passed" if passed else "not_met", message=message
+            )
+
+        def require(frame: Screenshot, state: str) -> None:
+            checked = check(frame, state)
+            if checked.status != "passed":
+                raise RuntimeError(f"媒体步骤前置状态不满足：{checked.message}")
+
+        def execute(name: str, step: MediaStepSpec) -> object:
+            def before(frame: Screenshot) -> None:
+                require(frame, step.before)
+
+            def verify(frame: Screenshot) -> ValidationResult:
+                state = "viewer" if step.expect == "file" else step.expect
+                return check(frame, state)
+
+            if step.action in ("click", "right_click"):
+
+                def locate(frame: Screenshot) -> LocatedTarget | None:
+                    before(frame)
+                    return self._media_target(
+                        frame, step.target, source, bounds, reader
+                    )
+
+                result = self._perform(
+                    step.action,
+                    name,
+                    None,
+                    locate_target=locate,
+                    verify=verify,
+                    timeout=step.timeout_seconds,
+                    settle_seconds=step.settle_seconds,
+                    follow_foreground=True,
+                    workflow_name=workflow_name,
+                )
+                if result.status != "verified":
+                    raise UiActionError(result)
+            elif step.action == "save_file":
+                return self.platform_step(
+                    "save_file",
+                    lambda: self.driver.save_dialog(directory),
+                    name=name,
+                    before=before,
+                    verify_file=on_file,
+                    verify=verify,
+                    timeout=step.timeout_seconds,
+                    workflow_name=workflow_name,
+                )
+            else:
+                self.platform_step(
+                    "close_viewer",
+                    lambda: self.driver.close_viewer(source.surface),
+                    name=name,
+                    before=before,
+                    verify=verify,
+                    timeout=step.timeout_seconds,
+                    workflow_name=workflow_name,
+                )
+                return None
+
+        current = workflow.entry
+        for _ in range(workflow.max_steps):
+            step = workflow.steps[current]
+            value = execute(current, step)
+            if isinstance(value, Path):
+                path = value
+            current = step.next
+            if current is None:
+                if not isinstance(path, Path):
+                    raise RuntimeError("媒体流程结束但未交付文件路径")
+                return path
+        raise RuntimeError("媒体流程超出步骤上限")

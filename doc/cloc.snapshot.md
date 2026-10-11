@@ -3,20 +3,19 @@
 ### 26.10.11 8:00
 
 ```sh
-> cloc --vcs git .
-      57 text files.
-      55 unique files.
-       2 files ignored.
+cloc src
 
-github.com/AlDanial/cloc v 2.10  T=3.02 s (18.2 files/s, 1684.5 lines/s)
+      39 text files.
+      39 unique files.
+      48 files ignored.
+
+github.com/AlDanial/cloc v 2.10  T=0.19 s (210.3 files/s, 21141.4 lines/s)
 -------------------------------------------------------------------------------
 Language                     files          blank        comment           code
 -------------------------------------------------------------------------------
-Python                          45            553            174           3382
-Markdown                         4            178              0            680
-TOML                             5             14             11             80
-JSON                             1              0              0             21
+Python                          38            489            242           2997
+Markdown                         1             43              0            149
 -------------------------------------------------------------------------------
-SUM:                            55            745            185           4163
+SUM:                            39            532            242           3146
 -------------------------------------------------------------------------------
 ```

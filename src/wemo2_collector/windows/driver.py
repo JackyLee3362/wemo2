@@ -6,6 +6,8 @@ import time
 from ctypes import wintypes
 from datetime import UTC, datetime
 
+from loguru import logger
+
 from wemo2_collector.interfaces import BaseDriver
 from wemo2_collector.models import (
     Direction,
@@ -74,7 +76,10 @@ class WindowsDriver(BaseDriver):
                 continue
             try:
                 process_name = psutil.Process(window.process_id).name().lower()
-            except psutil.Error:
+            except psutil.Error as error:
+                logger.exception(
+                    "读取候选窗口进程 {} 失败，跳过该候选：{}", window.process_id, error
+                )
                 continue
             if process_name in ("wechat.exe", "weixin.exe"):
                 matches.append(window)
@@ -188,7 +193,8 @@ class WindowsDriver(BaseDriver):
         self.device = new_device
         try:
             self.current_surface()
-        except Exception:
+        except Exception as error:
+            logger.exception("新前台窗口校验失败，恢复原会话：{}", error)
             new_device.screen.close()
             self.device = old_device
             raise

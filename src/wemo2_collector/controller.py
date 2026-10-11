@@ -73,7 +73,13 @@ class UiController(BaseController):
                 self.driver.verify_capture(surface)
                 self.validator.validate_frame(frame)
                 return frame
-            except (OSError, RuntimeError, ValueError):
+            except (OSError, RuntimeError, ValueError) as error:
+                logger.exception(
+                    "截图或校验失败，第 {}/{} 次：{}",
+                    attempt + 1,
+                    self.config.capture_attempts,
+                    error,
+                )
                 if attempt + 1 == self.config.capture_attempts:
                     raise
                 time.sleep(self.config.poll_interval)
@@ -209,14 +215,15 @@ class UiController(BaseController):
             time.sleep(settle_seconds)
             self._observe(result, timeout, follow_foreground)
         except Exception as error:
-            result.status = "failed"
-            result.error = str(error)
             logger.exception(
-                "界面动作 {} 失败；已尝试 {}，已执行 {}",
+                "界面动作 {} 失败；已尝试 {}，已执行 {}：{}",
                 operation,
                 result.attempted,
                 result.executed,
+                error,
             )
+            result.status = "failed"
+            result.error = str(error)
         result.evidence = self._artifacts[evidence_start:]
         return self._finish(result)
 
@@ -254,6 +261,9 @@ class UiController(BaseController):
                 path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
                 self._artifacts.append(path)
             except OSError as error:
+                logger.exception(
+                    "保存动作证据失败，动作 {}：{}", result.action_id, error
+                )
                 result.status = "failed"
                 result.error = f"无法保存动作证据：{error}；原始错误：{result.error}"
         self.results.append(result)

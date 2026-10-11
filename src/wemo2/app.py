@@ -6,6 +6,7 @@ from rich.text import Text
 from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig
 from wemo2.console import error_console, show_result
+from wemo2.logging import add_file_sink, initialize_startup_logging
 from wemo2.models import RunResult, StopPolicy
 from wemo2.registry import IMPORT_COLLECTOR, collectors, stores
 
@@ -49,32 +50,27 @@ def run_config(config: AppConfig) -> RunResult:
 
 def launch(config: AppConfig) -> None:
     """终端展示交互结果，运行日志及异常详情写入文件。"""
-    logger.remove()
+    startup_sink, startup_log = initialize_startup_logging()
     try:
-        config.log_file.parent.mkdir(parents=True, exist_ok=True)
-        sink = logger.add(
-            config.log_file,
-            level=config.log_level,
-            encoding="utf-8",
-            rotation="10 MB",
-            retention="7 days",
-            diagnose=False,
-            backtrace=False,
-        )
-    except (OSError, ValueError) as error:
-        error_console.print(Text(f"无法初始化日志文件：{error}", style="red"))
-        raise SystemExit(1) from None
-    try:
-        result = run_config(config)
-        storage_notice = stores.get(config.store).notice
-        show_result(result, storage_notice, config.log_file)
-    except Exception as error:
-        logger.exception("流程执行失败")
-        error_console.print(Text(f"执行失败：{error}", style="red"))
-        error_console.print(Text(f"详细日志：{config.log_file}"))
-        raise SystemExit(1) from None
+        try:
+            add_file_sink(config.log_file, config.log_level)
+        except (OSError, ValueError) as error:
+            logger.exception("无法初始化运行日志文件 {}：{}", config.log_file, error)
+            error_console.print(Text(f"无法初始化日志文件：{error}", style="red"))
+            error_console.print(Text(f"详细日志：{startup_log}"))
+            raise SystemExit(1) from None
+        logger.remove(startup_sink)
+        try:
+            result = run_config(config)
+            storage_notice = stores.get(config.store).notice
+            show_result(result, storage_notice, config.log_file)
+        except Exception as error:
+            logger.exception("流程执行失败：{}", error)
+            error_console.print(Text(f"执行失败：{error}", style="red"))
+            error_console.print(Text(f"详细日志：{config.log_file}"))
+            raise SystemExit(1) from None
     finally:
-        logger.remove(sink)
+        logger.remove()
 
 
 def main() -> None:

@@ -249,6 +249,7 @@ log_file = "logs/wemo2.log"
 platform = "windows"
 window_title = "微信"
 screenshot_dir = "data/screenshot"
+timezone = "Asia/Shanghai"
 theme = "dark"
 
 [collector_options.route]
@@ -278,3 +279,12 @@ F5 调试入口保持不变。截图目录除 PNG/截图元数据外，还会生
 朋友圈菜单点击目前仍返回 pending，尚未验证动态列表。
 Windows 滑动为区域内鼠标拖动，朋友圈滚动采集仍未接入。
 控制器参数可放在 `[collector_options.controller]`，详细协议见采集器架构。
+
+截图时区通过 `[collector_options] timezone = "Asia/Shanghai"` 配置，默认上海时间。
+文件名使用该时区时间并附带偏移（例如 `+0800`），JSON 的 `captured_at` 保留偏移，
+`timezone` 保留 IANA 名称。可改为 `UTC` 或其他有效 IANA 时区；无效名称在启动时拒绝。
+
+所有捕获异常均写入错误日志并保留堆栈，包括重试、跳过和回滚分支。
+配置加载或正式日志路径初始化失败时，异常先写入 `logs/wemo2.log` 的启动日志；
+默认目录不可写时改用系统临时目录中的 `wemo2/startup.log`，错误提示会显示实际日志路径。
+帮助和版本不会创建日志。

@@ -6,6 +6,8 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from loguru import logger
+
 from wemo2.deduplicator import canonical_json
 from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
 from wemo2.models import (
@@ -96,7 +98,8 @@ class PseudoStore(BaseStore):
         snapshot = deepcopy((self._posts, self._observations, self._revisions))
         try:
             yield
-        except BaseException:
+        except BaseException as error:
+            logger.exception("内存事务失败，恢复快照：{}", error)
             self._posts, self._observations, self._revisions = snapshot
             raise
 

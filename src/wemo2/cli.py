@@ -3,10 +3,12 @@
 from pathlib import Path
 
 import typer
+from loguru import logger
 
 from wemo2 import __version__
 from wemo2.config import load_config
 from wemo2.console import console
+from wemo2.logging import initialize_startup_logging
 
 cli = typer.Typer(
     help="wemo2 朋友圈备份工具", add_completion=False, pretty_exceptions_enable=False
@@ -33,12 +35,17 @@ def start(
     values = {}
     if log_file is not None:
         values["log_file"] = log_file
+    _, startup_log = initialize_startup_logging()
     try:
-        settings = load_config(values, config)
-    except (OSError, ValueError, TypeError) as error:
-        raise typer.BadParameter(str(error)) from error
+        try:
+            settings = load_config(values, config)
+        except (OSError, ValueError, TypeError) as error:
+            logger.exception("配置加载失败：{}", error)
+            raise typer.BadParameter(f"{error}；详细日志：{startup_log}") from error
 
-    # 延迟导入执行层，--help/--version 不会启动采集流程。
-    from wemo2.app import launch
+        # 延迟导入执行层，--help/--version 不会启动采集或创建日志。
+        from wemo2.app import launch
 
-    launch(settings)
+        launch(settings)
+    finally:
+        logger.remove()

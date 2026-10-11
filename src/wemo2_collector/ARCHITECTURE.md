@@ -83,6 +83,7 @@ log_file = "logs/wemo2.log"
 platform = "windows"
 window_title = "微信"
 screenshot_dir = "data/screenshot"
+timezone = "Asia/Shanghai"
 theme = "dark"
 
 [collector_options.matcher]
@@ -177,3 +178,11 @@ max_frame_age = 5
 截图和定位仅在输入之前有限重试；验证时只重新观察，不再次点击或拖动。
 页面路由的 timeout_seconds 可覆盖单次动作验证等待；settle_seconds 来自路由注册数据。
 配置仍属于采集器，核心 wemo2 不读取这些字段。
+
+## 8. 截图时区
+
+时区配置属于采集器：`[collector_options] timezone = "Asia/Shanghai"`，默认上海时间。
+使用标准库 ZoneInfo，tzdata 为 Windows 提供 IANA 数据，启动时校验名称。
+截图文件名按该时区格式化并带 UTC 偏移；captured_at 保留偏移，timezone 保留 IANA 名称。
+动作证据中的嵌套截图沿用同一时间。时效校验仍比较带时区的时间点，跨时区不影响五秒限制。
+旧元数据缺少 timezone 字段时保持兼容，不推测或修改其时间含义。

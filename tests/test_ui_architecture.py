@@ -277,3 +277,25 @@ class UiArchitectureTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "没有从"):
             pages.path("a", "c")
+
+    def test_timezone_config_reaches_screenshotter_and_defaults_to_shanghai(self):
+        for options, expected in (({}, "Asia/Shanghai"), ({"timezone": "UTC"}, "UTC")):
+            config = AppConfig(
+                collector="windows_screenshot", collector_options=options
+            )
+            source = collectors.create(config.collector, config.model_dump())
+            self.assertEqual(source.screenshotter.timezone.key, expected)
+            self.assertEqual(source.config.timezone, expected)
+
+    def test_invalid_timezone_is_rejected_before_connecting_device(self):
+        for timezone in ("Asia/NotARealPlace", "/Asia/Shanghai", ""):
+            with self.subTest(timezone=timezone):
+                with patch(
+                    "wemo2_collector.windows.driver.WindowsDriver.attach"
+                ) as attach:
+                    with self.assertRaises(ValidationError):
+                        AppConfig(
+                            collector="windows_screenshot",
+                            collector_options={"timezone": timezone},
+                        )
+                attach.assert_not_called()

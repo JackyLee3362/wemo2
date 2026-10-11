@@ -1,8 +1,10 @@
 import tempfile
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import numpy as np
 from PIL import Image
@@ -12,7 +14,9 @@ from wemo2.cli import cli
 from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig
 from wemo2_collector.main import run_collector
-from wemo2_collector.models import Platform, Rect, Screenshot, Surface
+from wemo2_collector.models import ControllerConfig, Platform, Rect, Screenshot, Surface
+from wemo2_collector.profiles import build_profiles
+from wemo2_collector.validation import UiValidator
 from wemo2_collector.windows.driver import WindowsDriver
 from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
@@ -421,3 +425,91 @@ class WindowsScreenshotTests(unittest.TestCase):
                 driver.follow_foreground()
         create.assert_not_called()
         driver.device.screen.close.assert_not_called()
+
+    def test_screenshot_default_timezone_is_shanghai(self):
+        self.assertEqual(WindowsScreenshotter(self.path).timezone.key, "Asia/Shanghai")
+
+    def test_filename_and_metadata_use_configured_timezone_including_dst(self):
+        cases = [
+            (
+                "Asia/Shanghai",
+                datetime(2026, 1, 10, tzinfo=UTC),
+                "20260110T080000+0800",
+                timedelta(hours=8),
+            ),
+            (
+                "UTC",
+                datetime(2026, 1, 10, tzinfo=UTC),
+                "20260110T000000+0000",
+                timedelta(0),
+            ),
+            (
+                "America/New_York",
+                datetime(2026, 1, 10, tzinfo=UTC),
+                "20260109T190000-0500",
+                timedelta(hours=-5),
+            ),
+            (
+                "America/New_York",
+                datetime(2026, 7, 10, tzinfo=UTC),
+                "20260709T200000-0400",
+                timedelta(hours=-4),
+            ),
+        ]
+        for timezone, instant, prefix, offset in cases:
+            with (
+                self.subTest(timezone=timezone, instant=instant),
+                patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+                patch(
+                    "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                    return_value=Image.new("RGB", (80, 60), "white"),
+                ),
+                patch("wemo2_collector.windows.screenshot.datetime") as clock,
+            ):
+                clock.now.return_value = instant.astimezone(ZoneInfo(timezone))
+                frame = WindowsScreenshotter(self.path, timezone).capture(self.surface)
+                clock.now.assert_called_once_with(ZoneInfo(timezone))
+            self.assertTrue(frame.image_path.name.startswith(f"wechat_{prefix}_"))
+            self.assertEqual(frame.timezone, timezone)
+            self.assertEqual(frame.captured_at.utcoffset(), offset)
+            self.assertEqual(frame.captured_at.astimezone(UTC), instant)
+            saved = Screenshot.model_validate_json(
+                frame.image_path.with_suffix(".json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(saved.timezone, timezone)
+            self.assertEqual(saved.captured_at.utcoffset(), offset)
+
+    def test_legacy_metadata_without_timezone_name_remains_readable(self):
+        instant = datetime(2026, 1, 10, tzinfo=UTC)
+        original = Screenshot(
+            frame_id="legacy",
+            captured_at=instant,
+            surface=self.surface,
+            image_path=self.path / "legacy.png",
+        )
+        legacy_json = original.model_dump_json(exclude={"timezone"})
+        loaded = Screenshot.model_validate_json(legacy_json)
+        self.assertIsNone(loaded.timezone)
+        self.assertEqual(loaded.captured_at, instant)
+
+    def test_frame_age_validation_compares_instants_across_timezones(self):
+        path = self.path / "shanghai.png"
+        with Image.new("RGB", (80, 60), "white") as image:
+            image.save(path)
+        now = datetime(2026, 1, 10, 0, 0, 1, tzinfo=UTC)
+        captured = datetime(2026, 1, 10, 8, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+        frame = Screenshot(
+            frame_id="local",
+            captured_at=captured,
+            timezone="Asia/Shanghai",
+            surface=self.surface,
+            image_path=path,
+        )
+        pages, _ = build_profiles()
+        validator = UiValidator(pages, MagicMock(), ControllerConfig())
+        with patch("wemo2_collector.validation.datetime") as clock:
+            clock.now.return_value = now
+            validator.validate_frame(frame)
+            clock.now.return_value = now + timedelta(seconds=5)
+            with self.assertRaisesRegex(RuntimeError, "已经过期"):
+                validator.validate_frame(frame)

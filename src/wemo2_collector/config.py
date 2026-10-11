@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wemo2_collector.models import ControllerConfig, MatchConfig, Platform, RouteConfig
 from wemo2_collector.profiles import build_profiles
+from wemo2_collector.timezones import resolve_timezone
 
 
 class WindowsCollectorConfig(BaseModel):
@@ -14,12 +15,22 @@ class WindowsCollectorConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     platform: Platform = Platform.windows
     screenshot_dir: Path = Path("data/screenshot")
+    timezone: str = Field(
+        default="Asia/Shanghai", min_length=1, description="截图时间使用的 IANA 时区"
+    )
     window_title: str = Field(default="微信", min_length=1)
     window_process_id: int | None = Field(default=None, gt=0)
     theme: str = "dark"
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
     matcher: MatchConfig = Field(default_factory=MatchConfig)
     route: RouteConfig = Field(default_factory=RouteConfig)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        """校验时区名称，保留字符串以便配置序列化。"""
+        resolve_timezone(value)
+        return value
 
 
 def load_windows_options(options: dict, directory: Path) -> dict:

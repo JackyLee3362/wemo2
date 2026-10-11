@@ -1,7 +1,7 @@
 """按客户区坐标截取屏幕显示内容，保存 PNG 及截图元数据。"""
 
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,6 +9,7 @@ from PIL import Image
 
 from wemo2_collector.interfaces import BaseScreenshotter
 from wemo2_collector.models import Platform, Screenshot, Surface
+from wemo2_collector.timezones import resolve_timezone
 from wemo2_collector.windows.backend import create_device
 
 
@@ -18,8 +19,11 @@ class WindowsScreenshotter(BaseScreenshotter):
     校验尺寸和近乎全黑的结果，不把完整桌面写入磁盘，也不负责页面判断。
     """
 
-    def __init__(self, directory: str | Path = "data/screenshot"):
+    def __init__(
+        self, directory: str | Path = "data/screenshot", timezone: str = "Asia/Shanghai"
+    ):
         self.directory = Path(directory)
+        self.timezone = resolve_timezone(timezone)
 
     def capture(self, surface: Surface) -> Screenshot:
         if sys.platform != "win32" or surface.platform != Platform.windows:
@@ -40,15 +44,18 @@ class WindowsScreenshotter(BaseScreenshotter):
             dark_pixels = sum(histogram[:8])
             if dark_pixels / (image.width * image.height) >= 0.999:
                 raise RuntimeError("微信截图几乎全黑，请确认桌面未锁定且窗口可见")
-            captured_at = datetime.now(UTC)
+            captured_at = datetime.now(self.timezone)
             frame_id = str(uuid4())
-            filename = f"wechat_{captured_at.strftime('%Y%m%dT%H%M%S')}_{frame_id}.png"
+            filename = (
+                f"wechat_{captured_at.strftime('%Y%m%dT%H%M%S%z')}_{frame_id}.png"
+            )
             self.directory.mkdir(parents=True, exist_ok=True)
             image_path = (self.directory / filename).resolve()
             image.save(image_path, format="PNG")
             frame = Screenshot(
                 frame_id=frame_id,
                 captured_at=captured_at,
+                timezone=self.timezone.key,
                 surface=surface,
                 image_path=image_path,
             )

@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from loguru import logger
+
 from wemo2.deduplicator import canonical_json
 from wemo2.interfaces import BaseStore
 from wemo2.models import Action, Content, Decision, Observation, Post, SavedObservation
@@ -52,7 +54,8 @@ class SQLiteStore(BaseStore):
         try:
             yield
             self.connection.commit()
-        except BaseException:
+        except BaseException as error:
+            logger.exception("SQLite 事务失败，执行回滚：{}", error)
             self.connection.rollback()
             raise
 

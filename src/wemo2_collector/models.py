@@ -36,7 +36,8 @@ class Screenshot(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     frame_id: str = Field(min_length=1)
-    captured_at: AwareDatetime
+    captured_at: AwareDatetime  # 按配置时区记录，序列化保留 UTC 偏移。
+    timezone: str | None = None  # IANA 名称；旧截图元数据可能没有该字段。
     surface: Surface
     image_path: Path
 

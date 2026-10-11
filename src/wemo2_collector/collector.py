@@ -25,7 +25,9 @@ class WindowsScreenshotCollector(BaseCollector):
         self.config = config
         pages, themes = build_profiles()
         self.driver = WindowsDriver(config.window_title, config.window_process_id)
-        self.screenshotter = WindowsScreenshotter(config.screenshot_dir)
+        self.screenshotter = WindowsScreenshotter(
+            config.screenshot_dir, config.timezone
+        )
         self.matcher = TemplateMatcher(config.matcher)
         self.locator = RegistryLocator(themes, config.theme, self.matcher)
         self.validator = UiValidator(pages, self.locator, config.controller)

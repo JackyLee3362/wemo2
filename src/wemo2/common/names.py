@@ -4,6 +4,18 @@ import unicodedata
 
 import emoji
 
+from wemo2.common.windows_names import sanitize_directory_name
+
+
+def normalize_person_with_raw(
+    person: str | None, raw: str | None
+) -> tuple[str | None, str | None]:
+    """清洗人物名并保留同一人物的解析原文，字段改变时避免遗留不相符的旧原文。"""
+    normalized = normalize_person(person)
+    if raw is None or normalize_person(raw) != normalized:
+        raw = person
+    return normalized, raw
+
 
 def normalize_person(value: str | None) -> str | None:
     """去除完整 emoji 序列及残留显示控制符，保留文字、数字和普通标点。"""
@@ -21,19 +33,4 @@ def person_directory(value: str | None) -> str:
     person = normalize_person(value)
     if person is None:
         return "unknown_person"
-    characters = []
-    for character in person:
-        if character in '<>:"/\\|?*' or ord(character) < 32:
-            characters.append("_")
-        else:
-            characters.append(character)
-    name = "".join(characters).rstrip(" .")
-    if not name or name in (".", ".."):
-        return "unknown_person"
-    reserved = {"CON", "PRN", "AUX", "NUL"}
-    for number in range(1, 10):
-        reserved.add(f"COM{number}")
-        reserved.add(f"LPT{number}")
-    if name.split(".")[0].upper() in reserved:
-        name = "_" + name
-    return name
+    return sanitize_directory_name(person, "unknown_person")

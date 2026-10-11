@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from wemo2.models import Platform
-from wemo2.names import normalize_person
+from wemo2.api.models import Platform
+from wemo2.common.names import normalize_person_with_raw
 
 
 class MomentDetails(BaseModel):
@@ -26,9 +26,9 @@ class MomentDetails(BaseModel):
     @model_validator(mode="after")
     def normalize_name(self):
         """去掉人物 emoji，保留 OCR 原文供归档留痕，不修改正文中的 emoji。"""
-        if self.person_raw is None:
-            self.person_raw = self.person
-        self.person = normalize_person(self.person)
+        person, raw = normalize_person_with_raw(self.person, self.person_raw)
+        self.person = person
+        self.person_raw = raw
         return self
 
 

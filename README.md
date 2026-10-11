@@ -80,7 +80,7 @@ JSON 记录粗略日期、人物、文案、完整度、截图证据及所有已
 
 ## 界面采集
 
-原 `wemo2_collector` 已合并到 `src/wemo2/collectors/`，继续维护页面、主题、路由、控制器和 Windows 驱动。通用元信息模型在 `src/wemo2/records.py`，存储阶段通过 `ArchivedPost` 接收 JSON 和文件路径，不导入 UI 模型。
+原 `wemo2_collector` 已合并到 `src/wemo2/collectors/`，继续维护页面、主题、路由、控制器和 Windows 驱动。通用元信息模型在 `src/wemo2/api/records.py`，存储阶段通过 `ArchivedPost` 接收 JSON 和文件路径，不导入 UI 模型。
 
 图片默认保持查看器打开，用右方向键切换下一张，并核对该卡片目标缩略图的放大图；切换失败则验证退出后逐张重开。设置 `use_image_arrows = false` 可直接使用重开策略。视频等待加载后保存并退出。保存失败不触发图片切换兜底；点击、滚动和方向键均不自动重发。
 
@@ -100,6 +100,8 @@ uv run ruff format . --check
 uv run python -m unittest discover -s tests -v
 ```
 
-更详细的架构见 `ARCHITECTURE.md`，采集内部设计见 `src/wemo2/collectors/ARCHITECTURE.md`，文件契约见 `doc/moment-resources.md`。
+代码按 `api`、`core`、`cli`、`collectors`、`stores`、`archives`、`common` 分包，组件统一在 `src/wemo2/core/registry.py` 登记。`api` 是 Python 接口与数据契约，不提供 HTTP 服务；`common` 只维护共用的基础函数。
+
+更详细的架构见 `ARCHITECTURE.md`，包职责及复用说明见 `doc/code-organization.md`，采集内部设计见 `src/wemo2/collectors/ARCHITECTURE.md`，文件契约见 `doc/moment-resources.md`。
 
 新目录层级为 `resource_dir/account/YYYY-MM-DD/person/hash/`。保存命令兼容读取原来的 `日期/hash` 布局；采集再次遇到旧归档时会升级到人物层级，同时保留截图、媒体和相对资源引用。去掉人物 emoji 后，旧人物哈希也会相应升级，正文中的 emoji 仍保留并参与去重。

@@ -43,7 +43,7 @@ class AirtestBackendTests(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import sys; import wemo2.cli; assert 'airtest' not in sys.modules; assert 'pywinauto' not in sys.modules",
+                "import sys; import wemo2.cli.commands; assert 'airtest' not in sys.modules; assert 'pywinauto' not in sys.modules",
             ],
             capture_output=True,
             text=True,

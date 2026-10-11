@@ -13,6 +13,7 @@ from wemo2.collectors.models import (
 )
 from wemo2.collectors.profiles import build_profile
 from wemo2.collectors.timezones import resolve_timezone
+from wemo2.common.paths import resolve_path
 
 
 class WindowsCollectorConfig(BaseModel):
@@ -54,8 +55,6 @@ def load_windows_options(options: dict, directory: Path) -> dict:
         profile.media_workflow(config.feed.media_workflow)
     if config.route.target != "none":
         profile.get_route(config.route.target)
-    path = config.screenshot_dir
-    if not path.is_absolute():
-        path = (directory / path).resolve()
+    path = resolve_path(config.screenshot_dir, directory)
     config = config.model_copy(update={"screenshot_dir": path})
     return {"config": config}

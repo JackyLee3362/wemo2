@@ -1,6 +1,6 @@
 # 采集模块架构（已合并进 wemo2）
 
-采集模块现位于 `src/wemo2/collectors`，由 `wemo2 collect` 运行。资源根目录与账号由共用 AppConfig 传入，采集模型只维护 UI 专属字段；MomentRecord 等本地元信息在 wemo2/records.py 中，截图裁剪用的 MomentDetails 留在 collectors/models.py。
+采集模块现位于 `src/wemo2/collectors`，由 `wemo2 collect` 运行。资源根目录与账号由 core/config.py 的 AppConfig 传入，采集模型只维护 UI 专属字段；MomentRecord 等本地元信息在 api/records.py 中，截图裁剪用的 MomentDetails 留在 collectors/models.py。
 
 采集器直接完成本地归档合并，返回 CollectResult。`wemo2 save --memos` 只读取归档，不调用 UiController 或驱动；当前存储是 pseudo，Memos 0.31 实现延后。旧独立调试模块、Observation 交付、去重器和协调器已经删除，VS Code 统一调试根 main.py。
 
@@ -12,11 +12,11 @@
 
 应用层负责组件选择、共用配置、日志及 collect/save 命令；本地去重在采集归档中完成。
 界面采集包自行解释 `collector_options`，应用不读取窗口、主题、模板或截图字段。
-唯一组件登记处绑定采集器与 `prepare_options`；校验配置不启动设备或创建输出文件。
+唯一组件登记处 core/registry.py 绑定采集器与 `prepare_options`；校验配置不启动设备或创建输出文件。core/services.py 执行采集或保存，cli 负责终端交互；common 基础函数与 archives 归档规则不导入采集模型。
 
 采集包已删除单实现的内部抽象、两套注册器、独立匹配器和未实现的 OCR/卡片解析接口。
 新增实际使用的 FeedCapture、TextRecognizer、MediaCapture 及数据模型，不预先增加空接口。
-保留核心 BaseCollector 与平台 BaseDriver；未来确实出现第二种实现时再抽取其他接口。
+保留 api/interfaces.py 的 BaseCollector 与平台 BaseDriver；未来确实出现第二种实现时再抽取其他接口。
 
 | 部分 | 文件 | 职责 |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ max_frame_age = 5
 
 原有 TOML 和 F5 入口保持可用，内部类型名称变更不需要迁移这些配置。
 none 只截图；其他动作名称来自 profile。相对路径由采集器相对配置目录解析。
-CLI 仍只有帮助、版本、配置路径和日志路径。
+CLI 提供 collect/save 子命令，共用帮助、版本、配置路径和日志路径；save 额外支持 --memos。
 
 窗口必须可见、完整处于屏幕内且无遮挡。Airtest 获取虚拟桌面后裁切客户区，
 完整桌面只在内存中存在，PNG 与 JSON 保存到截图目录。
@@ -215,12 +215,12 @@ OCR 及卡片解析输出采集私有 MomentDetails；MomentArchive 通过人物
 保存调用返回后执行文件验证回调，再确认已回到查看器。关闭后确认原窗口及媒体内容连续性。
 `WindowsDriver.is_save_dialog()` 只读检查窗口类和标题；实际输入仍由 `save_dialog()` 承担。
 
-文件验证和哈希归 `MediaCapture`，使用 `hashlib.file_digest` 流式计算文件 SHA-256。
+文件验证由 `MediaCapture` 负责，哈希调用 `common.files.sha256_file` 流式计算真实文件 SHA-256，采集归档和保存读取共用该函数。
 保存成功但后续截图或返回失败时，文件、哈希和 `last_saved` 仍可写入卡片清单。
 动作证据的 `workflow` 记录流程名，`name` 记录步骤名，`validation` 记录实际后置检查。
 所有失败分支统一停止并保留证据，暂不支持自动恢复或重发输入。
 
-应用与核心去重/存储接口不感知这些步骤。昵称和图像块布局仍保持原实现，未在本次扩展。
+应用与存储接口不感知这些步骤。昵称和图像块布局仍保持原实现，未在本次扩展。
 窗口内查看器及视频专用界面仍需新的资源与实机样本；此重构不代表已验证其兼容性。
 
 ## 9. 朋友圈资源归档
@@ -230,7 +230,7 @@ OCR 及卡片解析输出采集私有 MomentDetails；MomentArchive 通过人物
 输出层级为资源根目录 → 备份账号 → 推断的发布日期（YYYY-MM-DD） → 去除 emoji 后的人物名 → 朋友圈身份键。
 
 `TextRecognizer.post_details` 识别人名、文案、时间原文；`dates.approximate_day`
-以截图时区推断到日。`wemo2/records.py` 定义 Pydantic 数据契约与相对资源引用。
+以截图时区推断到日。`api/records.py` 定义 Pydantic 数据契约与相对资源引用。
 `FeedSegment.stream_start/stream_end` 关联已拼接动态与 `SavedPreview.stream_y`，
 使跨屏媒体进入所属朋友圈，而不依赖可见卡片是否完整。
 MediaCapture 也处理尚未出现结尾锚点的可见尾段，避免长动态的上排媒体滚出窗口后遗漏。
@@ -257,4 +257,4 @@ MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝
 
 ViewerSession 保存当前查看器证据和批次缓存起点。下载文件立即留下 SavedPreview 和卡片记录，整批成功返回列表后才标记 workflow_complete，避免失败批次被缓存误当作完成。视频保存后退出；左右键由 BaseDriver.switch_image 平台能力提供，WindowsDriver 使用 Airtest 的 keyevent。标准另存为对话框仍使用 Win32 控件，与方向键切换策略无关。
 
-人名规范化调用通用 names.normalize_person，原文保存在 person_raw。OCR 的蓝色昵称片段合并后再清洗 emoji，正文不受影响。MomentArchive 通过 archive_paths 生成账号/日期/人物/朋友圈目录，保存命令共享同一目录规范。
+人名规范化调用 common.names.normalize_person，原文保存在 person_raw。OCR 的蓝色昵称片段合并后再清洗 emoji，正文不受影响。MomentArchive 通过 archives.paths 生成账号/日期/人物/朋友圈目录，保存命令共享同一目录规范。post.json 的最终写入复用 common.files.write_model_json，资源范围检查复用 common.paths。

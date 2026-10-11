@@ -19,6 +19,7 @@ from wemo2.collectors.recognition import (
     file_kind,
     media_tiles,
 )
+from wemo2.common.files import sha256_file
 
 
 class SavedMedia(BaseModel):
@@ -147,8 +148,7 @@ class MediaCapture:
         def on_file(path: Path) -> None:
             nonlocal saved, preview
             kind = file_kind(path)
-            with path.open("rb") as file:
-                digest = hashlib.file_digest(file, "sha256").hexdigest()
+            digest = sha256_file(path)
             saved = SavedMedia(
                 path=path, kind=kind, sha256=digest, size=path.stat().st_size
             )

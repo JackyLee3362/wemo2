@@ -6,8 +6,8 @@ from unittest.mock import patch
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from wemo2.cli import cli
-from wemo2.config import AppConfig, load_config
+from wemo2.cli.commands import cli
+from wemo2.core.config import AppConfig, load_config
 
 
 class ConfigTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class ConfigTests(unittest.TestCase):
         return path
 
     def invoke(self, args):
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
+        with patch("wemo2.core.config.Path.cwd", return_value=self.cwd):
             return CliRunner().invoke(cli, args)
 
     def test_default_collector_and_shared_resource_paths(self):
@@ -87,7 +87,7 @@ class ConfigTests(unittest.TestCase):
             ["--config", str(path), "collect"],
             ["save", "--config", str(path)],
         ):
-            with self.subTest(args=args), patch("wemo2.app.launch") as launch:
+            with self.subTest(args=args), patch("wemo2.cli.runtime.launch") as launch:
                 result = self.invoke(args)
                 self.assertEqual(result.exit_code, 0, result.output)
                 settings = launch.call_args.args[1]
@@ -96,7 +96,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_save_memos_selects_explicit_destination(self):
         path = self.write_config('collector="pseudo"\n')
-        with patch("wemo2.app.launch") as launch:
+        with patch("wemo2.cli.runtime.launch") as launch:
             result = self.invoke(["save", "--memos", "--config", str(path)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(launch.call_args.args[0], "save")
@@ -106,7 +106,7 @@ class ConfigTests(unittest.TestCase):
         path = self.write_config(
             'collector="pseudo"\nlog_file="logs/file.log"\naccount="A"\n'
         )
-        with patch("wemo2.app.launch") as launch:
+        with patch("wemo2.cli.runtime.launch") as launch:
             result = self.invoke(
                 ["collect", "--config", str(path), "--log-file", "logs/cli.log"]
             )
@@ -117,8 +117,8 @@ class ConfigTests(unittest.TestCase):
 
     def test_no_arguments_only_show_help_without_logs_or_components(self):
         with (
-            patch("wemo2.cli.initialize_startup_logging") as initialize,
-            patch("wemo2.app.run_collect") as run,
+            patch("wemo2.cli.commands.initialize_startup_logging") as initialize,
+            patch("wemo2.core.services.run_collect") as run,
         ):
             result = self.invoke([])
         self.assertEqual(result.exit_code, 0)
@@ -136,8 +136,8 @@ class ConfigTests(unittest.TestCase):
         ):
             with (
                 self.subTest(args=args),
-                patch("wemo2.cli.load_config") as loader,
-                patch("wemo2.cli.initialize_startup_logging") as initialize,
+                patch("wemo2.cli.commands.load_config") as loader,
+                patch("wemo2.cli.commands.initialize_startup_logging") as initialize,
             ):
                 result = self.invoke(args)
                 self.assertEqual(result.exit_code, 0, result.output)
@@ -146,7 +146,9 @@ class ConfigTests(unittest.TestCase):
 
     def test_collect_failure_has_nonzero_exit_and_no_success_result(self):
         path = self.write_config('collector="pseudo"\n')
-        with patch("wemo2.app.run_collect", side_effect=RuntimeError("failed")):
+        with patch(
+            "wemo2.core.services.run_collect", side_effect=RuntimeError("failed")
+        ):
             result = self.invoke(["collect", "--config", str(path)])
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(result.stdout, "")
@@ -166,7 +168,7 @@ class ConfigTests(unittest.TestCase):
 
     def test_invalid_configuration_stops_before_execution_and_logs(self):
         path = self.write_config('unknown="value"\n')
-        with patch("wemo2.app.launch") as launch:
+        with patch("wemo2.cli.runtime.launch") as launch:
             result = self.invoke(["collect", "--config", str(path)])
         self.assertEqual(result.exit_code, 2)
         launch.assert_not_called()
@@ -179,7 +181,7 @@ class ConfigTests(unittest.TestCase):
     def test_log_initialization_failure_retains_startup_log(self):
         blocked = self.cwd / "blocked"
         blocked.write_text("not a directory", encoding="utf-8")
-        with patch("wemo2.app.run_collect") as run:
+        with patch("wemo2.core.services.run_collect") as run:
             result = self.invoke(["collect", "--log-file", "blocked/run.log"])
         self.assertEqual(result.exit_code, 1)
         self.assertIn("无法初始化日志文件", result.stderr)

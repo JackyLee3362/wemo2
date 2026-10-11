@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wemo2.archive_reader import ArchiveReader
-from wemo2.pseudo import PseudoCollector
-from wemo2.records import ArchiveMedia, MomentRecord
+from wemo2.api.records import ArchiveMedia, MomentRecord
+from wemo2.archives.reader import ArchiveReader
+from wemo2.collectors.pseudo import PseudoCollector
 
 
 class ArchiveReaderTests(unittest.TestCase):

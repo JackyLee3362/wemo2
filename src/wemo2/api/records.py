@@ -1,14 +1,11 @@
 """每条朋友圈的本地归档契约，不包含窗口操作实现。"""
 
-import hashlib
-import json
-import unicodedata
 from datetime import date
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from wemo2.names import normalize_person
+from wemo2.common.names import normalize_person_with_raw
 
 
 class ArchiveMedia(BaseModel):
@@ -61,18 +58,7 @@ class MomentRecord(BaseModel):
     @model_validator(mode="after")
     def normalize_name(self):
         """统一元信息中的人名，读取旧 JSON 时保留原始 emoji 名称作为证据。"""
-        if self.person_raw is None:
-            self.person_raw = self.person
-        self.person = normalize_person(self.person)
+        person, raw = normalize_person_with_raw(self.person, self.person_raw)
+        self.person = person
+        self.person_raw = raw
         return self
-
-
-def moment_key(person: str | None, text: str | None, text_status: str) -> str | None:
-    """按人物和完整文案生成身份键；未知和截断正文不参与本地归档合并。"""
-    person = normalize_person(person)
-    if person is None or text is None or text_status != "complete":
-        return None
-    person = " ".join(unicodedata.normalize("NFC", person).split())
-    text = " ".join(unicodedata.normalize("NFC", text).split())
-    payload = json.dumps([person, text], ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

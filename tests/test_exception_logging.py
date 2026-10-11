@@ -9,7 +9,7 @@ from loguru import logger
 from PIL import Image
 from typer.testing import CliRunner
 
-from wemo2.cli import cli
+from wemo2.cli.commands import cli
 from wemo2.collectors.controller import UiController
 from wemo2.collectors.models import (
     ControllerConfig,
@@ -19,7 +19,7 @@ from wemo2.collectors.models import (
     Surface,
 )
 from wemo2.collectors.profiles import UiProfile
-from wemo2.logging import add_file_sink, initialize_startup_logging
+from wemo2.common.logging import add_file_sink, initialize_startup_logging
 
 
 class ExceptionLoggingTests(unittest.TestCase):
@@ -65,7 +65,7 @@ class ExceptionLoggingTests(unittest.TestCase):
             'collector = "windows_screenshot"\n[collector_options]\ntimezone = "Invalid/Timezone"\n',
             encoding="utf-8",
         )
-        with patch("wemo2.config.Path.cwd", return_value=self.path):
+        with patch("wemo2.core.config.Path.cwd", return_value=self.path):
             result = CliRunner().invoke(cli, ["collect", "--config", str(config)])
         self.assertEqual(result.exit_code, 2)
         self.assertNotIn("Traceback", result.stderr)
@@ -78,7 +78,7 @@ class ExceptionLoggingTests(unittest.TestCase):
     def test_invalid_running_log_path_is_recorded_in_startup_log(self):
         blocked = self.path / "blocked"
         blocked.write_text("file", encoding="utf-8")
-        with patch("wemo2.config.Path.cwd", return_value=self.path):
+        with patch("wemo2.core.config.Path.cwd", return_value=self.path):
             result = CliRunner().invoke(
                 cli, ["collect", "--log-file", str(blocked / "run.log")]
             )
@@ -101,8 +101,8 @@ class ExceptionLoggingTests(unittest.TestCase):
             return real_add(path, level)
 
         with (
-            patch("wemo2.logging.add_file_sink", side_effect=add),
-            patch("wemo2.logging.gettempdir", return_value=str(self.path)),
+            patch("wemo2.common.logging.add_file_sink", side_effect=add),
+            patch("wemo2.common.logging.gettempdir", return_value=str(self.path)),
         ):
             _, path = initialize_startup_logging()
         self.assertEqual(path, self.path / "wemo2/startup.log")
@@ -147,7 +147,7 @@ class ExceptionLoggingTests(unittest.TestCase):
         driver.click.assert_not_called()
 
     def test_help_and_version_do_not_initialize_startup_log(self):
-        with patch("wemo2.cli.initialize_startup_logging") as initialize:
+        with patch("wemo2.cli.commands.initialize_startup_logging") as initialize:
             for option in ("--help", "--version"):
                 result = CliRunner().invoke(cli, [option])
                 self.assertEqual(result.exit_code, 0)

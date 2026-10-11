@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from wemo2.models import ArchivedPost, CollectResult
+from wemo2.api.models import ArchivedPost, CollectResult
 
 
 class BaseCollector(ABC):

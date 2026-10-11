@@ -1,17 +1,18 @@
-"""模拟采集与存储：产出真实本地归档，远端保存仅在内存中演示。"""
+"""离线模拟采集，产出与实际采集相同的本地归档格式。"""
 
 from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from loguru import logger
 from PIL import Image, ImageDraw
 
-from wemo2.archive_paths import resolve_moment_folder
-from wemo2.interfaces import BaseCollector, BaseStore
-from wemo2.models import ArchivedPost, CollectResult
-from wemo2.records import MomentRecord, moment_key
+from wemo2.api.interfaces import BaseCollector
+from wemo2.api.models import CollectResult
+from wemo2.api.records import MomentRecord
+from wemo2.archives.identity import moment_key
+from wemo2.archives.paths import resolve_moment_folder
+from wemo2.common.files import write_model_json
 
 
 class PseudoCollector(BaseCollector):
@@ -59,9 +60,7 @@ class PseudoCollector(BaseCollector):
                     (20, 70), "wemo2 pseudo collection", fill="white"
                 )
                 image.save(screenshot)
-        temporary = metadata.with_name(f"post_{uuid4()}.tmp")
-        temporary.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-        temporary.replace(metadata)
+        write_model_json(metadata, record)
         self.paths = [metadata, screenshot]
         logger.info("模拟采集完成，归档目录：{}", folder)
         return CollectResult(posts=1, artifacts=self.paths)
@@ -69,22 +68,3 @@ class PseudoCollector(BaseCollector):
     def artifacts(self) -> list[Path]:
         """返回模拟采集实际保存的文件，不伪造远端保存回执。"""
         return list(self.paths)
-
-
-class PseudoStore(BaseStore):
-    """在内存中接收归档与资源引用，演示未来 Memos 0.31 保存接口，不上传数据。"""
-
-    def __init__(self):
-        self.posts: list[ArchivedPost] = []
-
-    def save(self, post: ArchivedPost) -> None:
-        """接收一条已校验的朋友圈及其实际文件，不再做人物文案去重。"""
-        self.posts.append(post.model_copy(deep=True))
-        logger.info(
-            "模拟保存朋友圈：账号={}，人物={}，日期={}，媒体={}，源目录={}",
-            post.record.account,
-            post.record.person,
-            post.record.approximate_date,
-            len(post.media_files),
-            post.metadata_path.parent,
-        )

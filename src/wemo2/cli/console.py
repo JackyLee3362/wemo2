@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.text import Text
 
-from wemo2.models import CollectResult, SaveResult
+from wemo2.api.models import CollectResult, SaveResult
 
 console = Console()
 error_console = Console(stderr=True)

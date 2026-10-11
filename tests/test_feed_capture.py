@@ -38,7 +38,7 @@ from wemo2.collectors.recognition import (
     media_tiles,
 )
 from wemo2.collectors.windows.driver import WindowsDriver
-from wemo2.config import AppConfig
+from wemo2.core.config import AppConfig
 
 
 class FeedCaptureTests(unittest.TestCase):

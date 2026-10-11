@@ -1,8 +1,8 @@
 import unittest
 
+from wemo2.archives.identity import moment_key
 from wemo2.collectors.models import MomentDetails
-from wemo2.names import normalize_person, person_directory
-from wemo2.records import moment_key
+from wemo2.common.names import normalize_person, person_directory
 
 
 class PersonNameTests(unittest.TestCase):

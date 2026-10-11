@@ -6,7 +6,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from wemo2.registry import collectors, stores
+from wemo2.common.paths import resolve_path
+from wemo2.common.windows_names import validate_directory_name
+from wemo2.core.registry import collectors, stores
 
 
 class AppConfig(BaseModel):
@@ -28,19 +30,7 @@ class AppConfig(BaseModel):
     @classmethod
     def validate_account(cls, value: str) -> str:
         """账号用作独立的 Windows 目录名，禁止越界路径及保留设备名。"""
-        if not value or value in (".", "..") or value.rstrip(" .") != value:
-            raise ValueError("账号目录名不能为空，也不能以空格或点结尾")
-        if any(character in value for character in '<>:"/\\|?*') or any(
-            ord(character) < 32 for character in value
-        ):
-            raise ValueError("账号目录名不能包含路径分隔符或 Windows 非法字符")
-        reserved = {"CON", "PRN", "AUX", "NUL"}
-        for number in range(1, 10):
-            reserved.add(f"COM{number}")
-            reserved.add(f"LPT{number}")
-        if value.split(".")[0].upper() in reserved:
-            raise ValueError("账号目录名不能使用 Windows 保留设备名")
-        return value
+        return validate_directory_name(value, "账号目录")
 
     @model_validator(mode="after")
     def validate_components(self):
@@ -56,10 +46,7 @@ def _resolve_paths(values: dict, directory: Path) -> dict:
     for key in ("resource_dir", "log_file"):
         value = result.get(key)
         if isinstance(value, (str, Path)):
-            path = Path(value)
-            if not path.is_absolute():
-                path = (directory / path).resolve()
-            result[key] = path
+            result[key] = resolve_path(value, directory)
     return result
 
 

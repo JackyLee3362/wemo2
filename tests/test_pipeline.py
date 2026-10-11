@@ -5,10 +5,11 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from wemo2.app import run_collect, run_save
-from wemo2.cli import cli
-from wemo2.config import AppConfig
-from wemo2.pseudo import PseudoCollector, PseudoStore
+from wemo2.cli.commands import cli
+from wemo2.collectors.pseudo import PseudoCollector
+from wemo2.core.config import AppConfig
+from wemo2.core.services import run_collect, run_save
+from wemo2.stores.pseudo import PseudoStore
 
 
 class PipelineTests(unittest.TestCase):
@@ -23,11 +24,11 @@ class PipelineTests(unittest.TestCase):
         )
 
     def test_collect_does_not_create_store_and_save_does_not_start_collector(self):
-        with patch("wemo2.registry.stores.create") as store:
+        with patch("wemo2.core.registry.stores.create") as store:
             result = run_collect(self.config)
         store.assert_not_called()
         self.assertEqual(result.posts, 1)
-        with patch("wemo2.registry.collectors.create") as collector:
+        with patch("wemo2.core.registry.collectors.create") as collector:
             result = run_save(self.config, use_memos=True)
         collector.assert_not_called()
         self.assertEqual(result.store, "memos")
@@ -39,7 +40,7 @@ class PipelineTests(unittest.TestCase):
             'collector="pseudo"\nresource_dir="resources"\naccount="demo"\n',
             encoding="utf-8",
         )
-        with patch("wemo2.config.Path.cwd", return_value=self.path):
+        with patch("wemo2.core.config.Path.cwd", return_value=self.path):
             collected = CliRunner().invoke(cli, ["collect", "--config", str(path)])
             saved = CliRunner().invoke(cli, ["save", "--memos", "--config", str(path)])
         self.assertEqual(collected.exit_code, 0, collected.output)
@@ -55,7 +56,7 @@ class PipelineTests(unittest.TestCase):
         source = MagicMock()
         source.collect.side_effect = RuntimeError("采集失败")
         with (
-            patch("wemo2.registry.collectors.create", return_value=source),
+            patch("wemo2.core.registry.collectors.create", return_value=source),
             self.assertRaisesRegex(RuntimeError, "采集失败"),
         ):
             run_collect(self.config)
@@ -66,7 +67,7 @@ class PipelineTests(unittest.TestCase):
         store = MagicMock(spec=PseudoStore)
         store.save.side_effect = RuntimeError("保存失败")
         with (
-            patch("wemo2.registry.stores.create", return_value=store),
+            patch("wemo2.core.registry.stores.create", return_value=store),
             self.assertRaisesRegex(RuntimeError, "保存失败"),
         ):
             run_save(self.config)
@@ -80,9 +81,10 @@ class PipelineTests(unittest.TestCase):
             'collector="pseudo"\nresource_dir="resources"\n', encoding="utf-8"
         )
         with (
-            patch("wemo2.config.Path.cwd", return_value=self.path),
+            patch("wemo2.core.config.Path.cwd", return_value=self.path),
             patch(
-                "wemo2.pseudo.PseudoStore.save", side_effect=RuntimeError("远端失败")
+                "wemo2.stores.pseudo.PseudoStore.save",
+                side_effect=RuntimeError("远端失败"),
             ),
         ):
             result = CliRunner().invoke(cli, ["save", "--memos", "--config", str(path)])

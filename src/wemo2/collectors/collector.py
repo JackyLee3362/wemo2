@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from wemo2.api.interfaces import BaseCollector
+from wemo2.api.models import CollectResult
 from wemo2.collectors.archive import MomentArchive
 from wemo2.collectors.config import WindowsCollectorConfig
 from wemo2.collectors.controller import UiController
@@ -12,8 +14,6 @@ from wemo2.collectors.profiles import build_profile
 from wemo2.collectors.routing import PageRouter
 from wemo2.collectors.windows.driver import WindowsDriver
 from wemo2.collectors.windows.screenshot import WindowsScreenshotter
-from wemo2.interfaces import BaseCollector
-from wemo2.models import CollectResult
 
 
 class WindowsScreenshotCollector(BaseCollector):

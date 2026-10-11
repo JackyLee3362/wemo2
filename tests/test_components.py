@@ -2,9 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wemo2.archive_reader import ArchiveReader
-from wemo2.interfaces import BaseCollector, BaseStore
-from wemo2.pseudo import PseudoCollector, PseudoStore
+from wemo2.api.interfaces import BaseCollector, BaseStore
+from wemo2.archives.reader import ArchiveReader
+from wemo2.collectors.pseudo import PseudoCollector
+from wemo2.stores.pseudo import PseudoStore
 
 
 class ComponentTests(unittest.TestCase):

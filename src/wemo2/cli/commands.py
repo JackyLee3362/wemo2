@@ -7,9 +7,9 @@ from loguru import logger
 from pydantic import BaseModel
 
 from wemo2 import __version__
-from wemo2.config import load_config
-from wemo2.console import console
-from wemo2.logging import initialize_startup_logging
+from wemo2.cli.console import console
+from wemo2.common.logging import initialize_startup_logging
+from wemo2.core.config import load_config
 
 cli = typer.Typer(
     help="wemo2 朋友圈采集与保存工具",
@@ -74,7 +74,7 @@ def _execute(
                 f"配置无效：{error}；详细日志：{startup_log}"
             ) from error
         # 执行层只在实际命令启动时导入，帮助和版本不会运行采集或保存。
-        from wemo2.app import launch
+        from wemo2.cli.runtime import launch
 
         launch(
             command,
@@ -108,3 +108,8 @@ def save(
 ) -> None:
     """读取已采集的朋友圈文件夹并交给存储器，不启动微信。"""
     _execute(ctx, "save", config, log_file, memos)
+
+
+def main() -> None:
+    """启动命令行，与根 main.py 和安装后的 wemo2 命令共用入口。"""
+    cli()

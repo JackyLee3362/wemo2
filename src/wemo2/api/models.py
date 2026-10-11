@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wemo2.records import MomentRecord
+from wemo2.api.records import MomentRecord
 
 
 class Platform(StrEnum):

@@ -6,8 +6,11 @@ from uuid import uuid4
 
 from loguru import logger
 
-from wemo2.names import person_directory
-from wemo2.records import MomentRecord, moment_key
+from wemo2.api.records import MomentRecord
+from wemo2.archives.identity import moment_key
+from wemo2.common.files import write_model_json
+from wemo2.common.names import person_directory
+from wemo2.common.paths import require_within
 
 
 def archive_metadata_paths(account_dir: Path) -> list[Path]:
@@ -30,8 +33,8 @@ def resolve_moment_folder(
     record = None
     if key is not None:
         for metadata in archive_metadata_paths(account_dir):
-            if not metadata.resolve().is_relative_to(account_dir.resolve()):
-                raise ValueError("归档元信息超出账号资源范围，未读取或移动")
+            require_within(account_dir, metadata)
+            require_within(account_dir, metadata.parent)
             candidate = MomentRecord.model_validate_json(
                 metadata.read_text(encoding="utf-8")
             )
@@ -54,8 +57,7 @@ def resolve_moment_folder(
         if old_day != "unknown_date":
             day = date.fromisoformat(old_day).isoformat()
     destination = account_dir / day / person_directory(person) / identifier
-    if not destination.resolve().is_relative_to(account_dir.resolve()):
-        raise ValueError("归档目录超出账号资源范围，未创建或移动")
+    require_within(account_dir, destination)
     if existing is not None and existing != destination:
         if destination.exists():
             raise FileExistsError("目标朋友圈目录已经存在，未覆盖或合并旧目录")
@@ -64,9 +66,7 @@ def resolve_moment_folder(
             existing.rename(destination)
             record.post_id = identifier
             record.dedup_key = key
-            temporary = destination / f"post_{uuid4()}.tmp"
-            temporary.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-            temporary.replace(destination / "post.json")
+            write_model_json(destination / "post.json", record)
             logger.info(
                 "归档目录已升级，保留截图和媒体：{} → {}", existing, destination
             )

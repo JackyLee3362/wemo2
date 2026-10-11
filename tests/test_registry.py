@@ -3,11 +3,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from wemo2.app import run_collect, run_save
-from wemo2.config import AppConfig
-from wemo2.interfaces import BaseCollector
-from wemo2.pseudo import PseudoCollector, PseudoStore
-from wemo2.registry import ComponentRegistry, collectors, stores
+from wemo2.api.interfaces import BaseCollector
+from wemo2.collectors.pseudo import PseudoCollector
+from wemo2.core.config import AppConfig
+from wemo2.core.registry import ComponentRegistry, collectors, stores
+from wemo2.core.services import run_collect, run_save
+from wemo2.stores.pseudo import PseudoStore
 
 
 class RegistryTests(unittest.TestCase):

@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wemo2.collectors.airtest_logging import AirtestLogHandler
 from wemo2.collectors.dates import approximate_day
 from wemo2.collectors.models import MomentDetails, Rect
-from wemo2.names import normalize_person
+from wemo2.common.names import normalize_person
 
 
 class TextLine(BaseModel):

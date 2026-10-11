@@ -11,6 +11,8 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
+from wemo2.api.records import MomentRecord
+from wemo2.archives.identity import moment_key
 from wemo2.collectors.archive import MomentArchive
 from wemo2.collectors.collector import WindowsScreenshotCollector
 from wemo2.collectors.config import WindowsCollectorConfig
@@ -27,8 +29,7 @@ from wemo2.collectors.models import (
     Surface,
 )
 from wemo2.collectors.recognition import TextLine, TextRecognizer
-from wemo2.config import AppConfig, load_config
-from wemo2.records import MomentRecord, moment_key
+from wemo2.core.config import AppConfig, load_config
 
 
 class MomentArchiveTests(unittest.TestCase):

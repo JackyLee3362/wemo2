@@ -7,10 +7,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from wemo2.api.interfaces import BaseCollector, BaseStore
 from wemo2.collectors.collector import WindowsScreenshotCollector
 from wemo2.collectors.config import load_windows_options
-from wemo2.interfaces import BaseCollector, BaseStore
-from wemo2.pseudo import PseudoCollector, PseudoStore
+from wemo2.collectors.pseudo import PseudoCollector
+from wemo2.stores.pseudo import PseudoStore
 
 
 class ComponentSpec(BaseModel):

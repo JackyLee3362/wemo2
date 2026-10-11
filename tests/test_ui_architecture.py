@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from pydantic import ValidationError
 
-from wemo2.app import run_collect
 from wemo2.collectors import validation
 from wemo2.collectors.controller import UiController
 from wemo2.collectors.locating import AirtestLocator
@@ -23,10 +22,11 @@ from wemo2.collectors.models import (
     Surface,
 )
 from wemo2.collectors.profiles import PageSpec, RouteSpec, UiProfile, build_profile
+from wemo2.collectors.pseudo import PseudoCollector
 from wemo2.collectors.routing import PageRouter
-from wemo2.config import AppConfig, load_config
-from wemo2.pseudo import PseudoCollector
-from wemo2.registry import collectors
+from wemo2.core.config import AppConfig, load_config
+from wemo2.core.registry import collectors
+from wemo2.core.services import run_collect
 
 
 class UiArchitectureTests(unittest.TestCase):
@@ -222,15 +222,17 @@ class UiArchitectureTests(unittest.TestCase):
         ):
             self.assertNotIn(name, AppConfig.model_fields)
         root = Path(__file__).parents[1] / "src/wemo2"
-        for path in root.glob("*.py"):
-            if path.name == "registry.py":  # 唯一允许绑定插件实现的组装登记处。
-                continue
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.ImportFrom):
-                    self.assertFalse(
-                        (node.module or "").startswith("wemo2.collectors"), path.name
-                    )
+        for package in ("api", "core", "common", "cli", "archives", "stores"):
+            for path in (root / package).rglob("*.py"):
+                if path == root / "core/registry.py":
+                    continue  # 唯一绑定具体采集实现的组装登记处。
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom):
+                        self.assertFalse(
+                            (node.module or "").startswith("wemo2.collectors"),
+                            str(path.relative_to(root)),
+                        )
 
     def test_ui_paths_are_resolved_by_collector_from_file_directory(self):
         with tempfile.TemporaryDirectory() as directory:

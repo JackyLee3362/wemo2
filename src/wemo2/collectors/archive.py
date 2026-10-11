@@ -3,12 +3,17 @@
 import hashlib
 import shutil
 from pathlib import Path
-from uuid import uuid4
 
 from loguru import logger
 from PIL import Image
 
-from wemo2.archive_paths import resolve_moment_folder
+from wemo2.api.records import (
+    ArchiveMedia,
+    MomentEvidence,
+    MomentRecord,
+)
+from wemo2.archives.identity import moment_key
+from wemo2.archives.paths import resolve_moment_folder
 from wemo2.collectors.media import MediaCapture, SavedMedia
 from wemo2.collectors.models import (
     FeedCaptureResult,
@@ -16,13 +21,9 @@ from wemo2.collectors.models import (
     MomentDetails,
     Screenshot,
 )
-from wemo2.names import normalize_person
-from wemo2.records import (
-    ArchiveMedia,
-    MomentEvidence,
-    MomentRecord,
-    moment_key,
-)
+from wemo2.common.files import sha256_file, write_model_json
+from wemo2.common.names import normalize_person_with_raw
+from wemo2.common.paths import resolve_resource_path
 
 
 class MomentArchive:
@@ -88,13 +89,9 @@ class MomentArchive:
         media: MediaCapture,
         error: str | None,
     ) -> None:
-        raw_person = details.person
-        details.person = normalize_person(raw_person)
-        if (
-            details.person_raw is None
-            or normalize_person(details.person_raw) != details.person
-        ):
-            details.person_raw = raw_person
+        person, raw = normalize_person_with_raw(details.person, details.person_raw)
+        details.person = person
+        details.person_raw = raw
         key = moment_key(details.person, details.text, details.text_status)
         folder = self._folder(key, details)
         folder.mkdir(parents=True, exist_ok=True)
@@ -169,16 +166,13 @@ class MomentArchive:
             record.media_complete = False
             raise
         finally:
-            temporary = metadata.with_name(f"post_{uuid4()}.tmp")
-            temporary.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-            temporary.replace(metadata)
+            write_model_json(metadata, record)
             self.paths.extend([metadata, primary, screenshot])
 
     def _copy_media(
         self, folder: Path, record: MomentRecord, saved: SavedMedia
     ) -> None:
-        with saved.path.open("rb") as file:
-            digest = hashlib.file_digest(file, "sha256").hexdigest()
+        digest = sha256_file(saved.path)
         if digest != saved.sha256 or saved.path.stat().st_size != saved.size:
             raise RuntimeError("已下载媒体与采集哈希或大小不一致，未标记归档成功")
         for existing in record.media:
@@ -186,9 +180,8 @@ class MomentArchive:
                 target = self._resource_path(folder, existing.path)
                 if not target.is_file():
                     raise RuntimeError("元信息引用的已归档媒体缺失，未跳过去重")
-                with target.open("rb") as file:
-                    if hashlib.file_digest(file, "sha256").hexdigest() != digest:
-                        raise RuntimeError("已归档媒体损坏，未跳过去重或覆盖原文件")
+                if sha256_file(target) != digest:
+                    raise RuntimeError("已归档媒体损坏，未跳过去重或覆盖原文件")
                 return
         destination = folder / "media" / f"{digest}{saved.path.suffix.lower()}"
         destination.parent.mkdir(exist_ok=True)
@@ -204,7 +197,4 @@ class MomentArchive:
         self.paths.append(destination)
 
     def _resource_path(self, folder: Path, relative: str) -> Path:
-        target = folder / relative
-        if not target.resolve().is_relative_to(folder.resolve()):
-            raise RuntimeError("元信息中的资源路径超出朋友圈文件夹，未读取或覆盖")
-        return target
+        return resolve_resource_path(folder, relative)

@@ -10,15 +10,15 @@ import numpy as np
 from PIL import Image
 from typer.testing import CliRunner
 
-from wemo2.app import run_collect
-from wemo2.cli import cli
+from wemo2.api.models import CollectResult
+from wemo2.cli.commands import cli
 from wemo2.collectors.models import Platform, Rect, Screenshot, Surface
 from wemo2.collectors.validation import validate_frame
 from wemo2.collectors.windows.driver import WindowsDriver
 from wemo2.collectors.windows.screenshot import WindowsScreenshotter
-from wemo2.config import AppConfig
-from wemo2.models import CollectResult
-from wemo2.registry import collectors
+from wemo2.core.config import AppConfig
+from wemo2.core.registry import collectors
+from wemo2.core.services import run_collect
 
 
 class WindowsScreenshotTests(unittest.TestCase):
@@ -121,8 +121,8 @@ class WindowsScreenshotTests(unittest.TestCase):
         collector.artifacts.return_value = [Path("data/screenshot/example.png")]
         config = AppConfig(collector="windows_screenshot")
         with (
-            patch("wemo2.registry.collectors.create", return_value=collector),
-            patch("wemo2.registry.stores.create") as store,
+            patch("wemo2.core.registry.collectors.create", return_value=collector),
+            patch("wemo2.core.registry.stores.create") as store,
         ):
             paths = run_collect(config).artifacts
         self.assertEqual(paths, [Path("data/screenshot/example.png")])

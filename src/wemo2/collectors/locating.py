@@ -2,9 +2,9 @@
 
 from PIL import Image
 
-from wemo2_collector.airtest_logging import configure_airtest_logging
-from wemo2_collector.models import LocatedTarget, MatchConfig, Rect, Screenshot
-from wemo2_collector.profiles import UiProfile
+from wemo2.collectors.airtest_logging import configure_airtest_logging
+from wemo2.collectors.models import LocatedTarget, MatchConfig, Rect, Screenshot
+from wemo2.collectors.profiles import UiProfile
 
 
 class AirtestLocator:

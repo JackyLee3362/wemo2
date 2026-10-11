@@ -2,29 +2,36 @@
 
 from pathlib import Path
 
+from wemo2.collectors.archive import MomentArchive
+from wemo2.collectors.config import WindowsCollectorConfig
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.feed import FeedCapture
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.media import MediaCapture
+from wemo2.collectors.profiles import build_profile
+from wemo2.collectors.routing import PageRouter
+from wemo2.collectors.windows.driver import WindowsDriver
+from wemo2.collectors.windows.screenshot import WindowsScreenshotter
 from wemo2.interfaces import BaseCollector
-from wemo2.models import Observation
-from wemo2_collector.archive import MomentArchive
-from wemo2_collector.config import WindowsCollectorConfig
-from wemo2_collector.controller import UiController
-from wemo2_collector.feed import FeedCapture
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.media import MediaCapture
-from wemo2_collector.profiles import build_profile
-from wemo2_collector.routing import PageRouter
-from wemo2_collector.windows.driver import WindowsDriver
-from wemo2_collector.windows.screenshot import WindowsScreenshotter
+from wemo2.models import CollectResult
 
 
 class WindowsScreenshotCollector(BaseCollector):
     """组装 Windows 驱动、截图器、Airtest 定位器、控制器和页面路由器。
 
     编排导航、分段截图、昵称识别和媒体保存；交付本地证据并释放会话。
-    当前尚不把视觉卡片转换为带稳定身份的朋友圈 Observation。
+    去重及本地归档在采集阶段完成，远端保存由独立命令执行。
     """
 
-    def __init__(self, config: WindowsCollectorConfig):
+    def __init__(
+        self,
+        config: WindowsCollectorConfig,
+        resource_dir: Path = Path("data/moments"),
+        account: str = "default",
+    ):
         self.config = config
+        self.resource_dir = resource_dir
+        self.account = account
         self.profile = build_profile()
         self.driver = WindowsDriver(config.window_title, config.window_process_id)
         self.screenshotter = WindowsScreenshotter(
@@ -44,7 +51,8 @@ class WindowsScreenshotCollector(BaseCollector):
         self.media: MediaCapture | None = None
         self.archive: MomentArchive | None = None
 
-    def collect(self) -> list[Observation]:
+    def collect(self) -> CollectResult:
+        """导航、采集并合并本地资源，返回实际归档文件和停止原因。"""
         self.controller.reset()
         self.feed = None
         self.media = None
@@ -60,9 +68,7 @@ class WindowsScreenshotCollector(BaseCollector):
                     self.media = MediaCapture(
                         self.controller, self.config.feed, self.config.screenshot_dir
                     )
-                    self.archive = MomentArchive(
-                        self.config.resource_dir, self.config.account
-                    )
+                    self.archive = MomentArchive(self.resource_dir, self.account)
                 self.feed = FeedCapture(
                     self.controller,
                     self.config.feed,
@@ -79,7 +85,15 @@ class WindowsScreenshotCollector(BaseCollector):
                         and self.feed.result.segments
                     ):
                         self.archive.export(self.feed.result, self.media)
-            return []  # 当前只交付界面证据，尚未识别朋友圈动态。
+            posts = set()
+            if self.archive is not None:
+                for path in self.archive.paths:
+                    if path.name == "post.json":
+                        posts.add(path)
+            reason = "completed" if self.feed is None else self.feed.result.stop_reason
+            return CollectResult(
+                posts=len(posts), artifacts=self.artifacts(), stop_reason=reason
+            )
         finally:
             self.driver.close()
 

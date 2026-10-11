@@ -1,183 +1,94 @@
-"""流程演示组件：内置数据、最小幂等策略和内存存储。"""
+"""模拟采集与存储：产出真实本地归档，远端保存仅在内存中演示。"""
 
-from collections.abc import Iterable
-from contextlib import contextmanager
-from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from loguru import logger
+from PIL import Image, ImageDraw
 
-from wemo2.deduplicator import canonical_json
-from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
-from wemo2.models import (
-    Action,
-    Content,
-    Decision,
-    Observation,
-    Platform,
-    Post,
-    SavedObservation,
-    Source,
-)
+from wemo2.interfaces import BaseCollector, BaseStore
+from wemo2.models import ArchivedPost, CollectResult
+from wemo2.records import MomentRecord, moment_key
 
 
 class PseudoCollector(BaseCollector):
-    """生成内置模拟记录或逐条交付指定记录，用于验证组件组合和重复处理。
+    """生成固定人物和文案的示例归档，重复运行复用同一文件夹，不访问微信。"""
 
-    输出模型副本，不读取真实微信界面。
-    """
+    def __init__(self, resource_dir: Path, account: str = "default"):
+        self.resource_dir = resource_dir
+        self.account = account
+        self.paths: list[Path] = []
 
-    def __init__(
-        self,
-        observations: Iterable[Observation] | None = None,
-        platform: Platform = Platform.windows,
-    ):
-        self.platform = Platform(platform)
-        if observations is None:
-            first = Observation(
-                schema_version="0.1.0",
-                observation_id="pseudo-obs-001",
-                account_scope="pseudo-account",
-                collector_id="pseudo",
-                observed_at=datetime(2026, 10, 10, 13, tzinfo=UTC),
-                source=Source(
-                    native_post_id="pseudo-post-001",
-                    native_id_namespace="pseudo-account",
-                    native_post_id_stable=True,
-                ),
-                content=Content(text="第一条模拟朋友圈"),
-                field_status={"text": "complete"},
-            )
-            second = first.model_copy(deep=True)
-            second.observation_id = "pseudo-obs-002"
-            second.source.native_post_id = "pseudo-post-002"
-            second.content.text = "第二条模拟朋友圈"
-            observations = [first, first, second]
-        records = []
-        for observation in observations:
-            records.append(observation.model_copy(deep=True))
-        self.observations = tuple(records)
-
-    def collect(self) -> Iterable[Observation]:
-        for observation in self.observations:
-            yield observation.model_copy(deep=True)
-
-
-class PseudoDeduplicator(BaseDeduplicator):
-    """仅演示 Observation 幂等，不判断不同观察是否属于同一条动态。"""
-
-    def resolve(self, observation: Observation, store: BaseStore) -> Decision:
-        previous = store.get_observation(
-            observation.account_scope, observation.observation_id
+    def collect(self) -> CollectResult:
+        """保存示例 JSON 和截图，用于离线验证 collect 到 save 的完整交付。"""
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        key = moment_key("示例人物", "这是一条模拟朋友圈。", "complete")
+        matches = list((self.resource_dir / self.account).glob(f"*/{key}/post.json"))
+        if len(matches) > 1:
+            raise RuntimeError("示例归档存在多个相同身份文件夹")
+        folder = (
+            matches[0].parent
+            if matches
+            else self.resource_dir / self.account / now.date().isoformat() / key
         )
-        if previous is not None:
-            previous_observation = Observation.model_validate_json(previous.payload)
-            previous_payload = canonical_json(previous_observation)
-            current_payload = canonical_json(observation)
-            if previous_payload != current_payload:
-                raise ValueError(
-                    "IDEMPOTENCY_CONFLICT: 同一 Observation ID 携带不同数据"
-                )
-            return Decision(
-                action="unchanged", post_id=previous.post_id, is_duplicate=True
+        folder.mkdir(parents=True, exist_ok=True)
+        metadata = folder / "post.json"
+        screenshot = folder / "screenshot.png"
+        if metadata.exists():
+            record = MomentRecord.model_validate_json(
+                metadata.read_text(encoding="utf-8")
             )
-        return Decision(action="created")
+            if record.account != self.account or record.dedup_key != key:
+                raise ValueError("已有示例归档的账号或身份不一致")
+            record.last_seen_at = now
+        else:
+            record = MomentRecord(
+                post_id=key,
+                account=self.account,
+                dedup_key=key,
+                person="示例人物",
+                text="这是一条模拟朋友圈。",
+                text_status="complete",
+                approximate_date=now.date(),
+                first_seen_at=now,
+                last_seen_at=now,
+                screenshot_complete=True,
+                media_requested=False,
+            )
+        if not screenshot.exists():
+            with Image.new("RGB", (360, 180), (35, 70, 60)) as image:
+                ImageDraw.Draw(image).text(
+                    (20, 70), "wemo2 pseudo collection", fill="white"
+                )
+                image.save(screenshot)
+        temporary = metadata.with_name(f"post_{uuid4()}.tmp")
+        temporary.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+        temporary.replace(metadata)
+        self.paths = [metadata, screenshot]
+        logger.info("模拟采集完成，归档目录：{}", folder)
+        return CollectResult(posts=1, artifacts=self.paths)
+
+    def artifacts(self) -> list[Path]:
+        """返回模拟采集实际保存的文件，不伪造远端保存回执。"""
+        return list(self.paths)
 
 
 class PseudoStore(BaseStore):
-    """单线程内存演示存储；退出进程即丢失，不是持久化备份。"""
+    """在内存中接收归档与资源引用，演示未来 Memos 0.31 保存接口，不上传数据。"""
 
     def __init__(self):
-        self._posts: dict[str, Post] = {}
-        self._observations: dict[tuple[str, str], SavedObservation] = {}
-        self._revisions: dict[tuple[str, int], Content] = {}
+        self.posts: list[ArchivedPost] = []
 
-    @contextmanager
-    def transaction(self):
-        snapshot = deepcopy((self._posts, self._observations, self._revisions))
-        try:
-            yield
-        except BaseException as error:
-            logger.exception("内存事务失败，恢复快照：{}", error)
-            self._posts, self._observations, self._revisions = snapshot
-            raise
-
-    def get_observation(
-        self, scope: str, observation_id: str
-    ) -> SavedObservation | None:
-        record = self._observations.get((scope, observation_id))
-        if record is None:
-            return None
-        return record.model_copy(deep=True)
-
-    def find_post(self, scope: str, identity_key: str) -> Post | None:
-        for post in self._posts.values():
-            if post.account_scope == scope and post.identity_key == identity_key:
-                return post.model_copy(deep=True)
-        return None
-
-    def save(self, observation: Observation, decision: Decision) -> Action:
-        if decision.action == "unchanged":
-            return "unchanged"
-        key = (observation.account_scope, observation.observation_id)
-        if key in self._observations:
-            raise ValueError("采集记录已经存在，必须先去重")
-        post_id = decision.post_id or str(uuid4())
-        existing = self._posts.get(post_id)
-        if existing is None:
-            if decision.identity_key is not None:
-                duplicate = self.find_post(
-                    observation.account_scope, decision.identity_key
-                )
-                if duplicate is not None:
-                    raise ValueError("动态身份已经存在，必须先去重")
-            post = Post(
-                post_id=post_id,
-                account_scope=observation.account_scope,
-                identity_key=decision.identity_key,
-                content=observation.content.model_copy(deep=True),
-                revision=1,
-                first_seen_at=observation.observed_at,
-                last_seen_at=observation.observed_at,
-            )
-            action: Action = "created"
-        else:
-            post = existing.model_copy(deep=True)
-            merged = post.content.model_dump(mode="json", exclude_unset=True)
-            incoming = observation.content.model_dump(mode="json", exclude_unset=True)
-            for field, value in incoming.items():
-                status = observation.field_status.get(field, "partial")
-                if value is None or status == "unknown":
-                    continue
-                if status == "complete" or merged.get(field) is None:
-                    merged[field] = value
-            content = Content.model_validate(merged)
-            changed = canonical_json(content) != canonical_json(post.content)
-            post.content = content
-            action = "unchanged"
-            if changed:
-                post.revision += 1
-                action = "merged"
-            post.last_seen_at = max(post.last_seen_at, observation.observed_at)
-        self._posts[post_id] = post
-        if action != "unchanged":
-            self._revisions[(post_id, post.revision)] = post.content.model_copy(
-                deep=True
-            )
-        self._observations[key] = SavedObservation(
-            account_scope=observation.account_scope,
-            observation_id=observation.observation_id,
-            post_id=post_id,
-            payload=canonical_json(observation),
+    def save(self, post: ArchivedPost) -> None:
+        """接收一条已校验的朋友圈及其实际文件，不再做人物文案去重。"""
+        self.posts.append(post.model_copy(deep=True))
+        logger.info(
+            "模拟保存朋友圈：账号={}，人物={}，日期={}，媒体={}，源目录={}",
+            post.record.account,
+            post.record.person,
+            post.record.approximate_date,
+            len(post.media_files),
+            post.metadata_path.parent,
         )
-        return action
-
-    def list_posts(self) -> list[Post]:
-        posts = []
-        for post in self._posts.values():
-            posts.append(post.model_copy(deep=True))
-        return posts
-
-    def close(self) -> None:
-        pass

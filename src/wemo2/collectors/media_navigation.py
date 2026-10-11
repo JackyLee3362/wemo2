@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
-from wemo2_collector.controller import UiActionError
-from wemo2_collector.models import Rect, Screenshot
+from wemo2.collectors.controller import UiActionError
+from wemo2.collectors.models import Rect, Screenshot
 
 if TYPE_CHECKING:
-    from wemo2_collector.media import CardCapture, MediaCapture
+    from wemo2.collectors.media import CardCapture, MediaCapture
 
 
 class ViewerSession(BaseModel):

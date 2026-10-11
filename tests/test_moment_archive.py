@@ -10,22 +10,24 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
-from wemo2_collector.archive import MomentArchive, moment_key
-from wemo2_collector.collector import WindowsScreenshotCollector
-from wemo2_collector.config import WindowsCollectorConfig, load_windows_options
-from wemo2_collector.dates import approximate_day
-from wemo2_collector.media import MediaCapture, SavedMedia, SavedPreview
-from wemo2_collector.models import (
+from wemo2.collectors.archive import MomentArchive
+from wemo2.collectors.collector import WindowsScreenshotCollector
+from wemo2.collectors.config import WindowsCollectorConfig
+from wemo2.collectors.dates import approximate_day
+from wemo2.collectors.media import MediaCapture, SavedMedia, SavedPreview
+from wemo2.collectors.models import (
     FeedCaptureConfig,
     FeedCaptureResult,
     FeedSegment,
+    MomentDetails,
     Platform,
     Rect,
     Screenshot,
     Surface,
 )
-from wemo2_collector.recognition import TextLine, TextRecognizer
-from wemo2_collector.records import MomentDetails, MomentRecord
+from wemo2.collectors.recognition import TextLine, TextRecognizer
+from wemo2.config import AppConfig, load_config
+from wemo2.records import MomentRecord, moment_key
 
 
 class MomentArchiveTests(unittest.TestCase):
@@ -155,7 +157,7 @@ class MomentArchiveTests(unittest.TestCase):
         self.assertEqual(updated.last_seen_at, self.frame.captured_at)
 
     def test_default_account_and_iso_date_use_configured_resource_root(self):
-        config = WindowsCollectorConfig(resource_dir=self.root)
+        config = AppConfig(resource_dir=self.root)
         self.details.approximate_date = date(2026, 10, 11)
         archive = MomentArchive(config.resource_dir, config.account)
         archive.export(self.result, self.media)
@@ -253,13 +255,13 @@ class MomentArchiveTests(unittest.TestCase):
         )
 
     def test_resource_config_resolves_relative_paths_and_rejects_unsafe_accounts(self):
-        config = load_windows_options(
-            {"resource_dir": "backup", "account": "账号A"}, self.path
-        )["config"]
+        config = load_config(
+            {"resource_dir": "backup", "account": "账号A"}, cwd=self.path
+        )
         self.assertEqual(config.resource_dir, self.path / "backup")
         for account in ("../other", "CON", "a/b", "a\\b", "NUL.txt", "", "a."):
             with self.subTest(account=account), self.assertRaises(ValidationError):
-                WindowsCollectorConfig(account=account)
+                AppConfig(account=account)
 
     def test_collector_exports_resources_automatically_and_preserves_capture_failure(
         self,
@@ -268,12 +270,12 @@ class MomentArchiveTests(unittest.TestCase):
             with self.subTest(fail=fail):
                 collector = WindowsScreenshotCollector(
                     WindowsCollectorConfig(
-                        resource_dir=self.root,
-                        account="账号A",
                         screenshot_dir=self.path,
                         feed=FeedCaptureConfig(enabled=True),
                         route={"target": "none"},
-                    )
+                    ),
+                    resource_dir=self.root,
+                    account="账号A",
                 )
                 collector.driver = MagicMock()
                 collector.controller.capture = MagicMock(return_value=self.frame)
@@ -287,7 +289,7 @@ class MomentArchiveTests(unittest.TestCase):
                         raise RuntimeError("采集输入失败")
 
                 with patch(
-                    "wemo2_collector.collector.FeedCapture.run",
+                    "wemo2.collectors.collector.FeedCapture.run",
                     autospec=True,
                     side_effect=capture,
                 ):
@@ -295,7 +297,7 @@ class MomentArchiveTests(unittest.TestCase):
                         with self.assertRaisesRegex(RuntimeError, "采集输入失败"):
                             collector.collect()
                     else:
-                        self.assertEqual(collector.collect(), [])
+                        self.assertEqual(collector.collect().posts, 1)
                 path, record = self.record()
                 self.assertIn(path, collector.artifacts())
                 self.assertEqual(len(record.media), 1)

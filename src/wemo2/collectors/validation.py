@@ -4,15 +4,15 @@ from datetime import UTC, datetime
 
 from PIL import Image, ImageChops
 
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.models import (
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.models import (
     Expectation,
     LocatedTarget,
     Rect,
     Screenshot,
     ValidationResult,
 )
-from wemo2_collector.profiles import UiProfile
+from wemo2.collectors.profiles import UiProfile
 
 
 def validate_frame(frame: Screenshot, max_age: float = 5.0) -> None:

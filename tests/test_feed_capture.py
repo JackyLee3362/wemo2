@@ -9,17 +9,16 @@ import numpy as np
 from PIL import Image
 from pydantic import ValidationError
 
-from wemo2.config import AppConfig
-from wemo2_collector.controller import UiController
-from wemo2_collector.feed import FeedCapture, overlap_shift
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.media import MediaCapture
-from wemo2_collector.media_navigation import (
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.feed import FeedCapture, overlap_shift
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.media import MediaCapture
+from wemo2.collectors.media_navigation import (
     ArrowImageStrategy,
     ReopenImageStrategy,
     image_save_strategy,
 )
-from wemo2_collector.models import (
+from wemo2.collectors.models import (
     ActionResult,
     ControllerConfig,
     FeedCaptureConfig,
@@ -31,9 +30,15 @@ from wemo2_collector.models import (
     Surface,
     ValidationResult,
 )
-from wemo2_collector.profiles import MediaTargetSpec, build_profile
-from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
-from wemo2_collector.windows.driver import WindowsDriver
+from wemo2.collectors.profiles import MediaTargetSpec, build_profile
+from wemo2.collectors.recognition import (
+    TextLine,
+    TextRecognizer,
+    file_kind,
+    media_tiles,
+)
+from wemo2.collectors.windows.driver import WindowsDriver
+from wemo2.config import AppConfig
 
 
 class FeedCaptureTests(unittest.TestCase):
@@ -351,7 +356,7 @@ class FeedCaptureTests(unittest.TestCase):
         controller = UiController(
             driver, screenshotter, MagicMock(), build_profile(), directory=self.path
         )
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             action = controller.scroll(Rect(x=0, y=0, width=200, height=300), 1)
         self.assertEqual(action.status, "verified")
         self.assertEqual(action.wheel_steps, 1)
@@ -384,7 +389,7 @@ class FeedCaptureTests(unittest.TestCase):
         controller = UiController(
             driver, screenshotter, MagicMock(), build_profile(), directory=self.path
         )
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             action = controller.scroll(Rect(x=0, y=0, width=200, height=300), 1)
         self.assertEqual(action.status, "verified")
         self.assertEqual(action.after, self.second)
@@ -401,7 +406,7 @@ class FeedCaptureTests(unittest.TestCase):
         screenshotter = MagicMock()
         screenshotter.capture.side_effect = [self.first, self.second, playing]
         controller = UiController(driver, screenshotter, MagicMock(), build_profile())
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             result = controller.scroll(Rect(x=0, y=0, width=200, height=300), 3)
         self.assertEqual(result.status, "verified")
         self.assertEqual(result.after, playing)
@@ -417,8 +422,8 @@ class FeedCaptureTests(unittest.TestCase):
         screenshotter.capture.side_effect = [self.first, playing]
         controller = UiController(driver, screenshotter, MagicMock(), build_profile())
         with (
-            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 3]),
-            patch("wemo2_collector.controller.time.sleep"),
+            patch("wemo2.collectors.controller.time.monotonic", side_effect=[0, 3]),
+            patch("wemo2.collectors.controller.time.sleep"),
         ):
             result = controller.scroll(Rect(x=0, y=0, width=200, height=300), 3)
         self.assertEqual(result.status, "failed")
@@ -442,7 +447,7 @@ class FeedCaptureTests(unittest.TestCase):
         )
         with (
             patch(
-                "wemo2_collector.media.media_tiles",
+                "wemo2.collectors.media.media_tiles",
                 return_value=[Rect(x=5, y=40, width=80, height=40)],
             ),
             patch.object(
@@ -469,7 +474,7 @@ class FeedCaptureTests(unittest.TestCase):
         media.reader.nickname.return_value = None
         with (
             patch(
-                "wemo2_collector.media.media_tiles",
+                "wemo2.collectors.media.media_tiles",
                 return_value=[Rect(x=70, y=50, width=80, height=80)],
             ),
             patch.object(media, "_save_media") as save,
@@ -607,7 +612,7 @@ class FeedCaptureTests(unittest.TestCase):
                 text="另存为", score=0.99, bounds=Rect(x=10, y=20, width=70, height=20)
             )
         ]
-        sleep = patch("wemo2_collector.controller.time.sleep")
+        sleep = patch("wemo2.collectors.controller.time.sleep")
         sleep.start()
         self.addCleanup(sleep.stop)
         return media
@@ -706,7 +711,7 @@ class FeedCaptureTests(unittest.TestCase):
 
         media.reader.read.side_effect = read
         # 测试关注加载提示消失后的输入顺序，不让证据文件写入速度决定超时。
-        with patch("wemo2_collector.controller.time.monotonic", return_value=0):
+        with patch("wemo2.collectors.controller.time.monotonic", return_value=0):
             media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
         wait = media.controller.results[1]
         self.assertEqual(wait.operation, "wait_ready")
@@ -738,7 +743,7 @@ class FeedCaptureTests(unittest.TestCase):
             Rect(x=70, y=40, width=50, height=50),
             Rect(x=130, y=40, width=50, height=50),
         ]
-        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+        with patch("wemo2.collectors.media.media_tiles", return_value=tiles):
             media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
         driver = media.controller.driver
         self.assertEqual(driver.click.call_count, 4)  # 一次打开图片与三次点击另存为。
@@ -766,7 +771,7 @@ class FeedCaptureTests(unittest.TestCase):
             Rect(x=70, y=40, width=50, height=50),
             Rect(x=130, y=40, width=50, height=50),
         ]
-        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+        with patch("wemo2.collectors.media.media_tiles", return_value=tiles):
             media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
         driver = media.controller.driver
         driver.switch_image.assert_called_once()
@@ -803,7 +808,7 @@ class FeedCaptureTests(unittest.TestCase):
             Rect(x=70, y=40, width=50, height=50),
         ]
         with (
-            patch("wemo2_collector.media.media_tiles", return_value=tiles),
+            patch("wemo2.collectors.media.media_tiles", return_value=tiles),
             self.assertRaisesRegex(RuntimeError, "第二张保存失败"),
         ):
             media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
@@ -831,7 +836,7 @@ class FeedCaptureTests(unittest.TestCase):
             Rect(x=10, y=40, width=50, height=50),
             Rect(x=70, y=40, width=50, height=50),
         ]
-        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+        with patch("wemo2.collectors.media.media_tiles", return_value=tiles):
             media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
         driver = media.controller.driver
         driver.switch_image.assert_not_called()
@@ -856,7 +861,7 @@ class FeedCaptureTests(unittest.TestCase):
             Rect(x=10, y=40, width=50, height=50),
             Rect(x=70, y=40, width=50, height=50),
         ]
-        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+        with patch("wemo2.collectors.media.media_tiles", return_value=tiles):
             media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
         driver = media.controller.driver
         driver.switch_image.assert_not_called()
@@ -1030,8 +1035,8 @@ class FeedCaptureTests(unittest.TestCase):
             patch.object(driver, "verify_capture"),
             patch.object(driver, "current_surface"),
             patch("pywinauto.Desktop") as desktop,
-            patch("wemo2_collector.windows.backend.create_device") as create,
-            patch("wemo2_collector.windows.driver.time.sleep"),
+            patch("wemo2.collectors.windows.backend.create_device") as create,
+            patch("wemo2.collectors.windows.driver.time.sleep"),
         ):
             desktop.return_value.window.return_value.wrapper_object.return_value = (
                 dialog
@@ -1088,7 +1093,7 @@ class FeedCaptureTests(unittest.TestCase):
         driver.user32.GetWindowThreadProcessId.side_effect = process_id
         with (
             patch.object(driver, "current_surface"),
-            patch("wemo2_collector.windows.backend.create_device") as create,
+            patch("wemo2.collectors.windows.backend.create_device") as create,
         ):
             driver.follow_foreground()
         create.assert_called_once_with(handle=456, foreground=False)

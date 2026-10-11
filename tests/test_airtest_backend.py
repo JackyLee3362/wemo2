@@ -5,8 +5,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from wemo2_collector.airtest_logging import AirtestLogHandler
-from wemo2_collector.windows.backend import create_device
+from wemo2.collectors.airtest_logging import AirtestLogHandler
+from wemo2.collectors.windows.backend import create_device
 
 
 class AirtestBackendTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class AirtestBackendTests(unittest.TestCase):
             record = logging.LogRecord(
                 "airtest", logging.INFO, "", 0, "test %s", ("message",), None
             )
-            with patch("wemo2_collector.airtest_logging.logger") as logger:
+            with patch("wemo2.collectors.airtest_logging.logger") as logger:
                 airtest_logger.handlers[0].emit(record)
                 logger.opt.return_value.log.assert_called_once_with(
                     "INFO", "test message"

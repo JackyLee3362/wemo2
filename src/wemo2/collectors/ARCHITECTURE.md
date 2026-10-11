@@ -1,4 +1,4 @@
-# wemo2_collector 架构
+# wemo2.collectors 架构
 
 状态：Windows 已接入截图、发现页导航、朋友圈选中验证、锚点分段、昵称 OCR 及媒体另存为流程。
 实际媒体查看器与另存为操作仍需实机验证；完整动态解析、Observation 转换及 Android 适配尚未完成。

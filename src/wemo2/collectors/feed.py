@@ -7,9 +7,9 @@ from uuid import uuid4
 from loguru import logger
 from PIL import Image
 
-from wemo2_collector.controller import UiActionError, UiController
-from wemo2_collector.media import MediaCapture
-from wemo2_collector.models import (
+from wemo2.collectors.controller import UiActionError, UiController
+from wemo2.collectors.media import MediaCapture
+from wemo2.collectors.models import (
     FeedCaptureConfig,
     FeedCaptureResult,
     FeedSegment,

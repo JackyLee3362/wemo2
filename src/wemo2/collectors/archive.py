@@ -1,9 +1,7 @@
 """将拼接后的朋友圈与跨屏下载媒体汇总为账号、日期、朋友圈文件夹。"""
 
 import hashlib
-import json
 import shutil
-import unicodedata
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
@@ -11,24 +9,19 @@ from uuid import uuid4
 from loguru import logger
 from PIL import Image
 
-from wemo2_collector.media import MediaCapture, SavedMedia
-from wemo2_collector.models import FeedCaptureResult, FeedSegment, Screenshot
-from wemo2_collector.records import (
-    ArchiveMedia,
+from wemo2.collectors.media import MediaCapture, SavedMedia
+from wemo2.collectors.models import (
+    FeedCaptureResult,
+    FeedSegment,
     MomentDetails,
+    Screenshot,
+)
+from wemo2.records import (
+    ArchiveMedia,
     MomentEvidence,
     MomentRecord,
+    moment_key,
 )
-
-
-def moment_key(person: str | None, text: str | None, text_status: str) -> str | None:
-    """按人物和完整文案生成身份键；保留空文案语义，不把未知或截断正文参与去重。"""
-    if not person or not person.strip() or text is None or text_status != "complete":
-        return None
-    person = " ".join(unicodedata.normalize("NFC", person).split())
-    text = " ".join(unicodedata.normalize("NFC", text).split())
-    payload = json.dumps([person, text], ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class MomentArchive:

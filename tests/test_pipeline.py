@@ -1,161 +1,95 @@
-import copy
-import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from pydantic import ValidationError
+from typer.testing import CliRunner
 
-from wemo2.collector import JsonCollector
-from wemo2.coordinator import Coordinator
-from wemo2.deduplicator import Deduplicator
-from wemo2.interfaces import BaseCollector
-from wemo2.models import Observation
-from wemo2.store import SQLiteStore
+from wemo2.app import run_collect, run_save
+from wemo2.cli import cli
+from wemo2.config import AppConfig
+from wemo2.pseudo import PseudoCollector, PseudoStore
 
 
 class PipelineTests(unittest.TestCase):
-    """验证 JSON 导入、幂等、稳定源身份、内容修订及跨进程持久化契约。"""
+    """验证通过本地文件夹交付的两阶段流程，不再创建去重器或协调器。"""
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.path = Path(self.directory.name)
-        self.record = json.loads(
-            (Path(__file__).parents[1] / "examples/observations.json").read_text(
-                encoding="utf-8"
-            )
-        )[0]
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.path = Path(folder.name)
+        self.config = AppConfig(
+            collector="pseudo", resource_dir=self.path / "resources"
+        )
 
-    def run_records(self, records):
-        source = self.path / "input.json"
-        source.write_text(json.dumps(records), encoding="utf-8")
-        with SQLiteStore(self.path / "backup.sqlite3") as store:
-            return Coordinator(JsonCollector(source), Deduplicator(), store).run()
+    def test_collect_does_not_create_store_and_save_does_not_start_collector(self):
+        with patch("wemo2.registry.stores.create") as store:
+            result = run_collect(self.config)
+        store.assert_not_called()
+        self.assertEqual(result.posts, 1)
+        with patch("wemo2.registry.collectors.create") as collector:
+            result = run_save(self.config, use_memos=True)
+        collector.assert_not_called()
+        self.assertEqual(result.store, "memos")
+        self.assertEqual(result.posts, 1)
 
-    def posts(self):
-        with SQLiteStore(self.path / "backup.sqlite3") as store:
-            return store.list_posts()
+    def test_cli_collect_then_save_memos_use_the_same_archive(self):
+        path = self.path / "config.toml"
+        path.write_text(
+            'collector="pseudo"\nresource_dir="resources"\naccount="demo"\n',
+            encoding="utf-8",
+        )
+        with patch("wemo2.config.Path.cwd", return_value=self.path):
+            collected = CliRunner().invoke(cli, ["collect", "--config", str(path)])
+            saved = CliRunner().invoke(cli, ["save", "--memos", "--config", str(path)])
+        self.assertEqual(collected.exit_code, 0, collected.output)
+        self.assertEqual(saved.exit_code, 0, saved.output)
+        self.assertIn("采集完成", collected.stdout)
+        self.assertIn("尚未接入", saved.stdout)
+        self.assertIn("未上传任何数据", saved.stdout)
+        self.assertEqual(
+            len(list((self.path / "resources/demo").rglob("post.json"))), 1
+        )
 
-    def test_replay_survives_reopening_store(self):
-        self.assertEqual(self.run_records([self.record]).created, 1)
-        self.assertEqual(self.run_records([self.record]).unchanged, 1)
-        self.assertEqual(len(self.posts()), 1)
-
-    def test_changed_content_preserves_revision_and_raw_observation(self):
-        self.run_records([self.record])
-        updated = copy.deepcopy(self.record)
-        updated["observation_id"] = "obs-new"
-        updated["content"]["text"] = "新的正文"
-        self.assertEqual(self.run_records([updated]).merged, 1)
-        self.assertEqual(self.posts()[0].revision, 2)
-        self.assertEqual(self.posts()[0].content.text, "新的正文")
-        with SQLiteStore(self.path / "backup.sqlite3") as store:
-            self.assertEqual(
-                store.connection.execute("SELECT count(*) FROM revisions").fetchone()[
-                    0
-                ],
-                2,
-            )
-            saved = store.get_observation(
-                self.record["account_scope"], self.record["observation_id"]
-            )
-            self.assertEqual(
-                Observation.model_validate_json(saved.payload),
-                Observation.model_validate(self.record),
-            )
-
-    def test_partial_observation_does_not_clear_complete_content(self):
-        self.run_records([self.record])
-        partial = copy.deepcopy(self.record)
-        partial["observation_id"] = "obs-partial"
-        partial["content"]["text"] = ""
-        partial["field_status"]["text"] = "partial"
-        self.assertEqual(self.run_records([partial]).unchanged, 1)
-        self.assertEqual(self.posts()[0].content.text, self.record["content"]["text"])
-
-    def test_idempotency_conflict_does_not_corrupt_store(self):
-        self.run_records([self.record])
-        changed = copy.deepcopy(self.record)
-        changed["content"]["text"] = "冲突"
-        with self.assertRaisesRegex(ValueError, "IDEMPOTENCY_CONFLICT"):
-            self.run_records([changed])
-        self.assertEqual(self.posts()[0].revision, 1)
-        self.assertEqual(self.run_records([self.record]).unchanged, 1)
-
-    def test_scope_and_native_ids_do_not_merge_identical_text(self):
-        other = copy.deepcopy(self.record)
-        other["observation_id"] = "obs-other"
-        other["source"]["native_post_id"] = "different-post"
-        account = copy.deepcopy(self.record)
-        account["account_scope"] = "different-account"
-        self.assertEqual(self.run_records([self.record, other, account]).created, 3)
-
-    def test_unknown_identity_keeps_distinct_observations(self):
-        self.record["source"]["native_post_id_stable"] = False
-        other = copy.deepcopy(self.record)
-        other["observation_id"] = "obs-other"
-        self.assertEqual(self.run_records([self.record, other]).created, 2)
-        self.assertEqual(self.run_records([self.record, other]).unchanged, 2)
-
-    def test_validation_occurs_before_any_record_is_saved(self):
-        invalid = copy.deepcopy(self.record)
-        invalid["source"]["native_post_id"] = None
-        with self.assertRaises(ValueError):
-            self.run_records([self.record, invalid])
-        self.assertEqual(self.posts(), [])
-
-    def test_collector_returns_nested_models_and_preserves_missing_fields(self):
-        source = self.path / "input.json"
-        source.write_text(json.dumps([self.record]), encoding="utf-8")
-        observation = JsonCollector(source).collect()[0]
-        self.assertIsInstance(observation, Observation)
-        self.assertEqual(observation.content.author.display_name, "示例用户")
-        dumped = observation.model_dump(mode="json", exclude_unset=True)
-        self.assertNotIn("comments", dumped["content"])
-        self.assertEqual(dumped["content"]["media"], [])
-
-    def test_model_rejects_invalid_nested_fields_and_naive_time(self):
-        for field, value in (
-            ("observed_at", "2026-10-10T13:00:00"),
-            ("observation_id", "  "),
-            ("schema_version", "9.0.0"),
+    def test_collect_failure_always_releases_collector(self):
+        source = MagicMock()
+        source.collect.side_effect = RuntimeError("采集失败")
+        with (
+            patch("wemo2.registry.collectors.create", return_value=source),
+            self.assertRaisesRegex(RuntimeError, "采集失败"),
         ):
-            invalid = copy.deepcopy(self.record)
-            invalid[field] = value
-            with self.subTest(field=field), self.assertRaises(ValidationError):
-                Observation.model_validate(invalid)
-        invalid = copy.deepcopy(self.record)
-        invalid["content"]["media"] = [{"kind": "image", "position": -1}]
-        with self.assertRaises(ValidationError):
-            Observation.model_validate(invalid)
-        invalid["content"]["media"] = []
-        invalid["source"]["native_post_id_stable"] = "true"
-        with self.assertRaises(ValidationError):
-            Observation.model_validate(invalid)
+            run_collect(self.config)
+        source.stop.assert_called_once()
 
-    def test_non_json_collector_can_supply_models_directly(self):
-        observation = Observation.model_validate(self.record)
+    def test_save_failure_closes_store_and_is_not_automatically_replayed(self):
+        PseudoCollector(self.config.resource_dir).collect()
+        store = MagicMock(spec=PseudoStore)
+        store.save.side_effect = RuntimeError("保存失败")
+        with (
+            patch("wemo2.registry.stores.create", return_value=store),
+            self.assertRaisesRegex(RuntimeError, "保存失败"),
+        ):
+            run_save(self.config)
+        store.save.assert_called_once()
+        store.close.assert_called_once()
 
-        class MemoryCollector(BaseCollector):
-            """直接产出测试模型，验证采集器不依赖 JSON 文件也能接入协调器。"""
-
-            def collect(self):
-                yield observation
-
-        with SQLiteStore(self.path / "backup.sqlite3") as store:
-            result = Coordinator(MemoryCollector(), Deduplicator(), store).run()
-            self.assertEqual(result.created, 1)
-
-    def test_legacy_payload_replays_without_false_conflict(self):
-        self.run_records([self.record])
-        with SQLiteStore(self.path / "backup.sqlite3") as store:
-            with store.transaction():
-                store.connection.execute(
-                    "UPDATE observations SET payload=?", (json.dumps(self.record),)
-                )
-        self.assertEqual(self.run_records([self.record]).unchanged, 1)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_save_failure_has_file_log_and_no_success_message(self):
+        PseudoCollector(self.config.resource_dir).collect()
+        path = self.path / "config.toml"
+        path.write_text(
+            'collector="pseudo"\nresource_dir="resources"\n', encoding="utf-8"
+        )
+        with (
+            patch("wemo2.config.Path.cwd", return_value=self.path),
+            patch(
+                "wemo2.pseudo.PseudoStore.save", side_effect=RuntimeError("远端失败")
+            ),
+        ):
+            result = CliRunner().invoke(cli, ["save", "--memos", "--config", str(path)])
+        self.assertEqual(result.exit_code, 1)
+        self.assertNotIn("保存流程完成", result.stdout)
+        self.assertIn("远端失败", result.stderr)
+        self.assertIn(
+            "RuntimeError: 远端失败",
+            (self.path / "logs/wemo2.log").read_text(encoding="utf-8"),
+        )

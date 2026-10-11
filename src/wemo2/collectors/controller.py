@@ -9,10 +9,10 @@ from typing import Literal
 from loguru import logger
 from PIL import Image
 
-from wemo2_collector import validation
-from wemo2_collector.interfaces import BaseDriver
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.models import (
+from wemo2.collectors import validation
+from wemo2.collectors.interfaces import BaseDriver
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.models import (
     ActionResult,
     ControllerConfig,
     Direction,
@@ -22,9 +22,9 @@ from wemo2_collector.models import (
     Screenshot,
     ValidationResult,
 )
-from wemo2_collector.profiles import MediaStepSpec, UiProfile
-from wemo2_collector.recognition import TextRecognizer
-from wemo2_collector.windows.screenshot import WindowsScreenshotter
+from wemo2.collectors.profiles import MediaStepSpec, UiProfile
+from wemo2.collectors.recognition import TextRecognizer
+from wemo2.collectors.windows.screenshot import WindowsScreenshotter
 
 
 class UiActionError(RuntimeError):

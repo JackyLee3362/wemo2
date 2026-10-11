@@ -9,8 +9,8 @@ from uuid import uuid4
 
 from loguru import logger
 
-from wemo2_collector.interfaces import BaseDriver
-from wemo2_collector.models import (
+from wemo2.collectors.interfaces import BaseDriver
+from wemo2.collectors.models import (
     Direction,
     LocatedTarget,
     Platform,
@@ -18,7 +18,7 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
-from wemo2_collector.validation import validate_frame, validate_target
+from wemo2.collectors.validation import validate_frame, validate_target
 
 
 class WindowsDriver(BaseDriver):
@@ -42,7 +42,7 @@ class WindowsDriver(BaseDriver):
         import psutil
         from pywinauto import findwindows
 
-        from wemo2_collector.windows.backend import create_device
+        from wemo2.collectors.windows.backend import create_device
 
         self.user32 = ctypes.WinDLL("user32", use_last_error=True)
         self.user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
@@ -198,7 +198,7 @@ class WindowsDriver(BaseDriver):
         if original_pid.value != foreground_pid.value:
             raise RuntimeError("点击后前台窗口不属于原微信进程，请检查微信界面")
         self.session_process_id = original_pid.value
-        from wemo2_collector.windows.backend import create_device
+        from wemo2.collectors.windows.backend import create_device
 
         new_device = create_device(handle=handle, foreground=False)
         old_device = self.device
@@ -360,7 +360,7 @@ class WindowsDriver(BaseDriver):
                         or active_process.value != process.value
                     ):
                         raise RuntimeError("保存后前台窗口不属于原微信进程")
-                    from wemo2_collector.windows.backend import create_device
+                    from wemo2.collectors.windows.backend import create_device
 
                     old = self.device
                     self.device = create_device(handle=foreground, foreground=False)
@@ -384,7 +384,7 @@ class WindowsDriver(BaseDriver):
 
     def close_viewer(self, original: Surface, *, allow_embedded: bool = False) -> None:
         """按一次 Escape 返回列表；内嵌查看器必须先由控制器验证放大图。"""
-        from wemo2_collector.windows.backend import create_device
+        from wemo2.collectors.windows.backend import create_device
 
         self.verify_capture(self.current_surface())
         if str(self.device.handle) == original.surface_id and not allow_embedded:

@@ -6,20 +6,12 @@ from unittest.mock import patch
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from wemo2.app import run_config
 from wemo2.cli import cli
-from wemo2.config import load_config
+from wemo2.config import AppConfig, load_config
 
 
 class ConfigTests(unittest.TestCase):
-    """验证配置优先级、路径基准、CLI 选项、文件日志和启动失败处理。"""
-
-    def parse_cli(self, args):
-        with patch("wemo2.app.launch") as application:
-            result = CliRunner().invoke(cli, args)
-        self.assertEqual(result.exit_code, 0, result.output)
-        application.assert_called_once()
-        return application.call_args.args[0]
+    """验证两个子命令的配置优先级、共用路径、帮助与文件日志。"""
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -32,170 +24,175 @@ class ConfigTests(unittest.TestCase):
         path.write_text(content, encoding="utf-8")
         return path
 
-    def test_code_defaults_when_auto_file_is_absent(self):
+    def invoke(self, args):
+        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
+            return CliRunner().invoke(cli, args)
+
+    def test_default_collector_and_shared_resource_paths(self):
         config = load_config(cwd=self.cwd)
-        self.assertEqual((config.collector, config.store), ("pseudo", "pseudo"))
-        self.assertEqual(config.database, self.cwd / "data/wemo2.sqlite3")
+        self.assertEqual(config.collector, "windows_screenshot")
+        self.assertEqual(config.store, "pseudo")
+        self.assertEqual(config.resource_dir, self.cwd / "data/moments")
+        self.assertEqual(config.account, "default")
         self.assertEqual(config.log_file, self.cwd / "logs/wemo2.log")
 
     def test_priority_and_explicit_default_value(self):
-        self.write_config(
-            'store = "sqlite"\ndeduplicator = "stable"\nlog_level = "DEBUG"\n'
+        path = self.write_config(
+            'collector="pseudo"\nstore="memos"\nlog_level="DEBUG"\n'
         )
-        config = load_config({"store": "pseudo", "log_level": "INFO"}, cwd=self.cwd)
+        config = load_config(
+            {"store": "pseudo", "log_level": "INFO"}, path, cwd=self.cwd
+        )
         self.assertEqual(config.store, "pseudo")
         self.assertEqual(config.log_level, "INFO")
-        self.assertEqual(config.deduplicator, "stable")
         self.assertEqual(config.collector, "pseudo")
 
-    def test_file_and_cli_paths_have_distinct_base_directories(self):
+    def test_file_paths_and_cli_paths_use_separate_base_directories(self):
         path = self.write_config(
-            'collector = "json"\ndatabase = "saved.sqlite3"\n[collector_options]\npath = "input.json"\n',
+            'resource_dir="backup"\nlog_file="logs/file.log"\n',
             self.cwd / "settings/custom.toml",
         )
-        config = load_config({"database": "override.sqlite3"}, path, cwd=self.cwd)
-        self.assertEqual(config.database, self.cwd / "override.sqlite3")
-        self.assertEqual(config.collector_options["path"], "input.json")
+        config = load_config({"log_file": "logs/cli.log"}, path, cwd=self.cwd)
+        self.assertEqual(config.resource_dir, self.cwd / "settings/backup")
+        self.assertEqual(config.log_file, self.cwd / "logs/cli.log")
 
-    def test_explicit_missing_file_and_invalid_config_report_errors(self):
-        with self.assertRaises(FileNotFoundError):
-            load_config(config_path="missing.toml", cwd=self.cwd)
-        for content in ('unknown = "value"', 'store = "memos"', 'collector = "json"'):
-            with self.subTest(content=content):
-                self.write_config(content)
-                with self.assertRaises(ValidationError):
-                    load_config(cwd=self.cwd)
-
-    def test_json_defaults_do_not_override_explicit_file_options(self):
-        self.write_config(
-            'collector = "json"\n[collector_options]\npath = "input.json"\n'
-        )
-        config = load_config(cwd=self.cwd)
-        self.assertEqual((config.deduplicator, config.store), ("stable", "sqlite"))
-        self.write_config(
-            'collector = "json"\nstore = "pseudo"\n[collector_options]\npath = "input.json"\n'
-        )
-        self.assertEqual(load_config(cwd=self.cwd).store, "pseudo")
-
-    def test_typer_omitted_values_do_not_overwrite_file(self):
-        self.write_config('store = "sqlite"\nlog_level = "DEBUG"\n')
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            config = self.parse_cli([])
-        self.assertEqual(config.store, "sqlite")
-        self.assertEqual(config.log_level, "DEBUG")
-
-    def test_json_input_is_loaded_from_config(self):
+    def test_legacy_resource_options_migrate_to_shared_fields(self):
         path = self.write_config(
-            'collector = "json"\n[collector_options]\npath = "records.json"\n'
+            '[collector_options]\nresource_dir="backup"\naccount="账号A"\n'
         )
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            config = self.parse_cli(["--config", str(path)])
-        self.assertEqual((config.collector, config.store), ("json", "sqlite"))
-        self.assertEqual(config.collector_options["path"], "records.json")
+        config = load_config(config_path=path, cwd=self.cwd)
+        self.assertEqual(config.resource_dir, self.cwd / "backup")
+        self.assertEqual(config.account, "账号A")
+        self.assertNotIn("resource_dir", config.collector_options)
+        self.assertNotIn("account", config.collector_options)
 
-    def test_invalid_cli_input_exits_before_execution(self):
-        path = self.write_config('collector = "json"\n')
-        with (
-            patch("wemo2.config.Path.cwd", return_value=self.cwd),
-            patch("wemo2.app.launch") as application,
+    def test_conflicting_resource_configuration_is_rejected(self):
+        path = self.write_config('account="A"\n[collector_options]\naccount="B"\n')
+        with self.assertRaisesRegex(ValueError, "配置冲突"):
+            load_config(config_path=path, cwd=self.cwd)
+
+    def test_removed_deduplication_and_database_options_are_rejected(self):
+        for values in (
+            {"deduplicator": "pseudo"},
+            {"duplicate_stop": "never"},
+            {"database": "old.db"},
         ):
-            result = CliRunner().invoke(cli, ["--config", str(path)])
-        self.assertEqual(result.exit_code, 2)
-        application.assert_not_called()
+            with self.subTest(values=values), self.assertRaises(ValidationError):
+                AppConfig(**values)
 
-    def test_cli_config_runs_selected_store(self):
-        self.write_config(
-            'store = "sqlite"\ndeduplicator = "stable"\ndatabase = "backup.sqlite3"\n'
-        )
-        config = load_config(cwd=self.cwd)
-        self.assertEqual(run_config(config).created, 2)
-        self.assertTrue(config.database.exists())
-        self.assertEqual(run_config(config).unchanged, 3)
+    def test_config_placement_and_omitted_cli_parameters(self):
+        path = self.write_config('collector="pseudo"\nlog_level="DEBUG"\n')
+        for args in (
+            ["collect", "--config", str(path)],
+            ["--config", str(path), "collect"],
+            ["save", "--config", str(path)],
+        ):
+            with self.subTest(args=args), patch("wemo2.app.launch") as launch:
+                result = self.invoke(args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                settings = launch.call_args.args[1]
+                self.assertEqual(settings.collector, "pseudo")
+                self.assertEqual(settings.log_level, "DEBUG")
 
-    def test_no_arguments_shows_rich_result_and_writes_file_log(self):
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            result = CliRunner().invoke(cli, [])
+    def test_save_memos_selects_explicit_destination(self):
+        path = self.write_config('collector="pseudo"\n')
+        with patch("wemo2.app.launch") as launch:
+            result = self.invoke(["save", "--memos", "--config", str(path)])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("采集完成", result.stdout)
-        self.assertIn("新增", result.stdout)
-        self.assertIn("日志文件", result.stdout)
-        self.assertNotIn("INFO", result.stdout)
-        self.assertEqual(result.stderr, "")
-        log = (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
-        self.assertIn("采集完成", log)
-        self.assertIn("INFO", log)
+        self.assertEqual(launch.call_args.args[0], "save")
+        self.assertTrue(launch.call_args.args[2])
 
-    def test_execution_failure_exits_one_without_success_result(self):
+    def test_cli_log_path_overrides_file_without_overriding_business_settings(self):
+        path = self.write_config(
+            'collector="pseudo"\nlog_file="logs/file.log"\naccount="A"\n'
+        )
+        with patch("wemo2.app.launch") as launch:
+            result = self.invoke(
+                ["collect", "--config", str(path), "--log-file", "logs/cli.log"]
+            )
+        self.assertEqual(result.exit_code, 0, result.output)
+        config = launch.call_args.args[1]
+        self.assertEqual(config.log_file, self.cwd / "logs/cli.log")
+        self.assertEqual(config.account, "A")
+
+    def test_no_arguments_only_show_help_without_logs_or_components(self):
         with (
-            patch("wemo2.config.Path.cwd", return_value=self.cwd),
-            patch("wemo2.app.run_config", side_effect=RuntimeError("failed")),
+            patch("wemo2.cli.initialize_startup_logging") as initialize,
+            patch("wemo2.app.run_collect") as run,
         ):
-            result = CliRunner().invoke(cli, [])
+            result = self.invoke([])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("collect", result.stdout)
+        self.assertIn("save", result.stdout)
+        initialize.assert_not_called()
+        run.assert_not_called()
+
+    def test_help_and_version_do_not_load_configuration(self):
+        for args in (
+            ["--help"],
+            ["--version"],
+            ["collect", "--help"],
+            ["save", "--help"],
+        ):
+            with (
+                self.subTest(args=args),
+                patch("wemo2.cli.load_config") as loader,
+                patch("wemo2.cli.initialize_startup_logging") as initialize,
+            ):
+                result = self.invoke(args)
+                self.assertEqual(result.exit_code, 0, result.output)
+                loader.assert_not_called()
+                initialize.assert_not_called()
+
+    def test_collect_failure_has_nonzero_exit_and_no_success_result(self):
+        path = self.write_config('collector="pseudo"\n')
+        with patch("wemo2.app.run_collect", side_effect=RuntimeError("failed")):
+            result = self.invoke(["collect", "--config", str(path)])
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(result.stdout, "")
         self.assertIn("执行失败", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
-        log = (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
-        self.assertIn("RuntimeError: failed", log)
-
-    def test_log_file_priority_and_relative_paths(self):
-        path = self.write_config(
-            'log_file = "logs/file.log"\n', self.cwd / "settings/custom.toml"
+        self.assertIn(
+            "RuntimeError: failed",
+            (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8"),
         )
-        file_config = load_config(config_path=path, cwd=self.cwd)
-        self.assertEqual(file_config.log_file, self.cwd / "settings/logs/file.log")
-        with patch("wemo2.config.Path.cwd", return_value=self.cwd):
-            config = self.parse_cli(
-                ["--config", str(path), "--log-file", "logs/cli.log"]
-            )
-        self.assertEqual(config.log_file, self.cwd / "logs/cli.log")
 
-    def test_invalid_log_path_reports_error_before_running(self):
+    def test_save_missing_archive_does_not_report_success(self):
+        path = self.write_config('collector="pseudo"\n')
+        result = self.invoke(["save", "--memos", "--config", str(path)])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("未找到朋友圈归档", result.stderr)
+        self.assertNotIn("保存流程完成", result.stdout)
+
+    def test_invalid_configuration_stops_before_execution_and_logs(self):
+        path = self.write_config('unknown="value"\n')
+        with patch("wemo2.app.launch") as launch:
+            result = self.invoke(["collect", "--config", str(path)])
+        self.assertEqual(result.exit_code, 2)
+        launch.assert_not_called()
+        self.assertIn(
+            "配置加载失败", (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
+        )
+        with self.assertRaises(FileNotFoundError):
+            load_config(config_path="missing.toml", cwd=self.cwd)
+
+    def test_log_initialization_failure_retains_startup_log(self):
         blocked = self.cwd / "blocked"
         blocked.write_text("not a directory", encoding="utf-8")
-        with (
-            patch("wemo2.config.Path.cwd", return_value=self.cwd),
-            patch("wemo2.app.run_config") as run,
-        ):
-            result = CliRunner().invoke(cli, ["--log-file", "blocked/wemo2.log"])
+        with patch("wemo2.app.run_collect") as run:
+            result = self.invoke(["collect", "--log-file", "blocked/run.log"])
         self.assertEqual(result.exit_code, 1)
         self.assertIn("无法初始化日志文件", result.stderr)
+        self.assertIn("详细日志", result.stderr)
         run.assert_not_called()
 
-    def test_help_and_version_do_not_load_config_or_launch(self):
-        for option in ("--help", "--version"):
-            with (
-                self.subTest(option=option),
-                patch("wemo2.cli.load_config") as loader,
-                patch("wemo2.app.launch") as application,
-            ):
-                result = CliRunner().invoke(cli, [option])
-                self.assertEqual(result.exit_code, 0, result.output)
-                self.assertIn("wemo2", result.output)
-                loader.assert_not_called()
-                application.assert_not_called()
-
-    def test_complex_settings_are_not_cli_options(self):
+    def test_business_options_remain_in_toml(self):
         for option in (
             "--collector",
-            "--deduplicator",
             "--store",
-            "--import-json",
             "--database",
             "--log-level",
             "--duplicate-stop",
-            "--duplicate-limit",
         ):
-            args = [option, "value"]
-            with self.subTest(args=args), patch("wemo2.app.launch") as application:
-                result = CliRunner().invoke(cli, args)
-                self.assertEqual(result.exit_code, 2)
-                application.assert_not_called()
-
-    def test_help_only_lists_four_supported_options(self):
-        result = CliRunner().invoke(cli, ["--help"])
-        self.assertEqual(result.exit_code, 0)
-        for option in ("--help", "--version", "--config", "--log-file"):
-            self.assertIn(option, result.stdout)
-        for option in ("--collector", "--store", "--log-level", "--duplicate-stop"):
-            self.assertNotIn(option, result.stdout)
+            with self.subTest(option=option):
+                self.assertEqual(self.invoke(["collect", option, "value"]).exit_code, 2)

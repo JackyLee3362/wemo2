@@ -10,14 +10,15 @@ import numpy as np
 from PIL import Image
 from typer.testing import CliRunner
 
+from wemo2.app import run_collect
 from wemo2.cli import cli
-from wemo2.composition import build_coordinator
+from wemo2.collectors.models import Platform, Rect, Screenshot, Surface
+from wemo2.collectors.validation import validate_frame
+from wemo2.collectors.windows.driver import WindowsDriver
+from wemo2.collectors.windows.screenshot import WindowsScreenshotter
 from wemo2.config import AppConfig
-from wemo2_collector.main import run_collector
-from wemo2_collector.models import Platform, Rect, Screenshot, Surface
-from wemo2_collector.validation import validate_frame
-from wemo2_collector.windows.driver import WindowsDriver
-from wemo2_collector.windows.screenshot import WindowsScreenshotter
+from wemo2.models import CollectResult
+from wemo2.registry import collectors
 
 
 class WindowsScreenshotTests(unittest.TestCase):
@@ -27,9 +28,9 @@ class WindowsScreenshotTests(unittest.TestCase):
         image = Image.new("RGB", (80, 60), "black")
         image.putpixel((0, 0), (255, 255, 255))
         with (
-            patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+            patch("wemo2.collectors.windows.screenshot.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image",
                 return_value=image,
             ),
         ):
@@ -48,7 +49,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         driver.user32.GetSystemMetrics.side_effect = metrics.__getitem__
         with (
             patch.object(driver, "current_surface", return_value=self.surface),
-            patch("wemo2_collector.windows.driver.time.sleep"),
+            patch("wemo2.collectors.windows.driver.time.sleep"),
         ):
             self.assertEqual(driver.prepare_capture(), self.surface)
         driver.device.set_foreground.assert_called_once()
@@ -68,7 +69,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         driver.user32.GetSystemMetrics.side_effect = metrics.__getitem__
         with (
             patch.object(driver, "current_surface", return_value=self.surface),
-            patch("wemo2_collector.windows.driver.time.sleep"),
+            patch("wemo2.collectors.windows.driver.time.sleep"),
         ):
             with self.assertRaisesRegex(RuntimeError, "超出屏幕"):
                 driver.prepare_capture()
@@ -114,20 +115,20 @@ class WindowsScreenshotTests(unittest.TestCase):
 
     def test_debug_entry_only_runs_collector_and_releases_it(self):
         collector = MagicMock()
-        collector.collect.return_value = []
+        collector.collect.return_value = CollectResult(
+            artifacts=[Path("data/screenshot/example.png")]
+        )
         collector.artifacts.return_value = [Path("data/screenshot/example.png")]
         config = AppConfig(collector="windows_screenshot")
         with (
-            patch("wemo2_collector.main.collectors.create", return_value=collector),
+            patch("wemo2.registry.collectors.create", return_value=collector),
             patch("wemo2.registry.stores.create") as store,
-            patch("wemo2.registry.deduplicators.create") as deduplicator,
         ):
-            paths = run_collector(config)
+            paths = run_collect(config).artifacts
         self.assertEqual(paths, [Path("data/screenshot/example.png")])
         collector.collect.assert_called_once()
         collector.stop.assert_called_once()
         store.assert_not_called()
-        deduplicator.assert_not_called()
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -143,9 +144,9 @@ class WindowsScreenshotTests(unittest.TestCase):
         screenshotter = WindowsScreenshotter(self.path)
         frames = []
         with (
-            patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+            patch("wemo2.collectors.windows.screenshot.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image"
+                "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image"
             ) as grab,
         ):
             for _ in range(2):
@@ -164,9 +165,9 @@ class WindowsScreenshotTests(unittest.TestCase):
         for size, color in (((80, 60), "black"), ((20, 20), "white")):
             with (
                 self.subTest(size=size, color=color),
-                patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+                patch("wemo2.collectors.windows.screenshot.sys.platform", "win32"),
                 patch(
-                    "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                    "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image",
                     return_value=Image.new("RGB", size, color),
                 ),
             ):
@@ -176,60 +177,63 @@ class WindowsScreenshotTests(unittest.TestCase):
 
     def test_screenshot_collector_rejects_android(self):
         with self.assertRaisesRegex(ValueError, "Android"):
-            build_coordinator(
-                "windows_screenshot", collector_options={"platform": "android"}
+            AppConfig(
+                collector="windows_screenshot",
+                collector_options={"platform": "android"},
             )
 
     def test_cli_saves_screenshot_without_fake_observations(self):
         config = self.path / "config.toml"
         config.write_text(
-            'collector = "windows_screenshot"\n[collector_options]\nscreenshot_dir = "captures"\nwindow_process_id = 42\n',
+            'collector = "windows_screenshot"\n[collector_options]\nscreenshot_dir = "captures"\nwindow_process_id = 42\n[collector_options.route]\ntarget = "none"\n[collector_options.feed]\nenabled = false\n',
             encoding="utf-8",
         )
         with (
             patch(
-                "wemo2_collector.windows.driver.WindowsDriver.attach",
+                "wemo2.collectors.windows.driver.WindowsDriver.attach",
                 return_value=self.surface,
             ),
             patch(
-                "wemo2_collector.windows.driver.WindowsDriver.prepare_capture",
+                "wemo2.collectors.windows.driver.WindowsDriver.prepare_capture",
                 return_value=self.surface,
             ),
-            patch("wemo2_collector.windows.driver.WindowsDriver.verify_capture"),
-            patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+            patch("wemo2.collectors.windows.driver.WindowsDriver.verify_capture"),
+            patch("wemo2.collectors.windows.screenshot.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image",
                 return_value=Image.new("RGB", (80, 60), "white"),
             ),
         ):
-            result = CliRunner().invoke(cli, ["--config", str(config)])
+            result = CliRunner().invoke(cli, ["collect", "--config", str(config)])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("采集文件已保存", result.stdout)
+        self.assertIn("采集完成", result.stdout)
         self.assertEqual(len(list((self.path / "captures").glob("*.png"))), 1)
-        coordinator = build_coordinator(
-            "windows_screenshot", collector_options={"window_process_id": 42}
-        )
-        self.assertEqual(coordinator.collector.driver.process_id, 42)
-        coordinator.store.close()
+        options = AppConfig(collector_options={"window_process_id": 42})
+        source = collectors.create(options.collector, options.model_dump())
+        self.assertEqual(source.driver.process_id, 42)
 
     def test_capture_failure_releases_driver(self):
-        coordinator = build_coordinator(
-            "windows_screenshot", collector_options={"screenshot_dir": self.path}
+        config = AppConfig(
+            collector_options={
+                "screenshot_dir": self.path,
+                "route": {"target": "none"},
+                "feed": {"enabled": False},
+            }
         )
+        source = collectors.create(config.collector, config.model_dump())
         driver = MagicMock()
         driver.attach.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
-        coordinator.collector.driver = driver
-        coordinator.collector.controller.driver = driver
+        source.driver = driver
+        source.controller.driver = driver
         with patch(
-            "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+            "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image",
             side_effect=OSError("capture failed"),
         ):
             with self.assertRaises((RuntimeError, OSError)):
-                coordinator.run()
+                source.collect()
         driver.close.assert_called()
-        self.assertEqual(coordinator.collector.artifacts(), [])
-        coordinator.store.close()
+        self.assertEqual(source.artifacts(), [])
 
     def test_driver_reports_missing_and_ambiguous_wechat_windows(self):
         window = SimpleNamespace(handle=123, process_id=42)
@@ -250,9 +254,9 @@ class WindowsScreenshotTests(unittest.TestCase):
                         "psutil": psutil,
                     },
                 ),
-                patch("wemo2_collector.windows.driver.sys.platform", "win32"),
+                patch("wemo2.collectors.windows.driver.sys.platform", "win32"),
                 patch(
-                    "wemo2_collector.windows.driver.ctypes.WinDLL",
+                    "wemo2.collectors.windows.driver.ctypes.WinDLL",
                     return_value=user32,
                     create=True,
                 ),
@@ -283,9 +287,9 @@ class WindowsScreenshotTests(unittest.TestCase):
                     "psutil": psutil,
                 },
             ),
-            patch("wemo2_collector.windows.driver.sys.platform", "win32"),
+            patch("wemo2.collectors.windows.driver.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.driver.ctypes.WinDLL",
+                "wemo2.collectors.windows.driver.ctypes.WinDLL",
                 return_value=user32,
                 create=True,
             ),
@@ -306,7 +310,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         pixels[10, 20] = (11, 22, 33)
         device.snapshot.return_value = pixels
         with patch(
-            "wemo2_collector.windows.screenshot.create_device", return_value=device
+            "wemo2.collectors.windows.screenshot.create_device", return_value=device
         ):
             image = WindowsScreenshotter(self.path)._capture_image(self.surface)
         try:
@@ -329,7 +333,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             ]
             device.snapshot.return_value = pixels
             with patch(
-                "wemo2_collector.windows.screenshot.create_device", return_value=device
+                "wemo2.collectors.windows.screenshot.create_device", return_value=device
             ):
                 with self.assertRaises(RuntimeError):
                     WindowsScreenshotter(self.path)._capture_image(self.surface)
@@ -339,7 +343,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         device = MagicMock()
         device.snapshot.side_effect = OSError("capture failed")
         with patch(
-            "wemo2_collector.windows.screenshot.create_device", return_value=device
+            "wemo2.collectors.windows.screenshot.create_device", return_value=device
         ):
             with self.assertRaises(OSError):
                 WindowsScreenshotter(self.path)._capture_image(self.surface)
@@ -365,14 +369,14 @@ class WindowsScreenshotTests(unittest.TestCase):
                     "psutil": psutil,
                 },
             ),
-            patch("wemo2_collector.windows.driver.sys.platform", "win32"),
+            patch("wemo2.collectors.windows.driver.sys.platform", "win32"),
             patch(
-                "wemo2_collector.windows.driver.ctypes.WinDLL",
+                "wemo2.collectors.windows.driver.ctypes.WinDLL",
                 return_value=user32,
                 create=True,
             ),
             patch(
-                "wemo2_collector.windows.backend.create_device", return_value=device
+                "wemo2.collectors.windows.backend.create_device", return_value=device
             ) as create,
         ):
             driver = WindowsDriver(process_id=42)
@@ -404,7 +408,8 @@ class WindowsScreenshotTests(unittest.TestCase):
         driver.user32.GetWindowThreadProcessId.side_effect = read_pid
         with (
             patch(
-                "wemo2_collector.windows.backend.create_device", return_value=new_device
+                "wemo2.collectors.windows.backend.create_device",
+                return_value=new_device,
             ) as create,
             patch.object(driver, "current_surface", return_value=self.surface),
         ):
@@ -425,7 +430,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             return 1
 
         driver.user32.GetWindowThreadProcessId.side_effect = read_pid
-        with patch("wemo2_collector.windows.backend.create_device") as create:
+        with patch("wemo2.collectors.windows.backend.create_device") as create:
             with self.assertRaisesRegex(RuntimeError, "不属于原微信进程"):
                 driver.follow_foreground()
         create.assert_not_called()
@@ -464,12 +469,12 @@ class WindowsScreenshotTests(unittest.TestCase):
         for timezone, instant, prefix, offset in cases:
             with (
                 self.subTest(timezone=timezone, instant=instant),
-                patch("wemo2_collector.windows.screenshot.sys.platform", "win32"),
+                patch("wemo2.collectors.windows.screenshot.sys.platform", "win32"),
                 patch(
-                    "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
+                    "wemo2.collectors.windows.screenshot.WindowsScreenshotter._capture_image",
                     return_value=Image.new("RGB", (80, 60), "white"),
                 ),
-                patch("wemo2_collector.windows.screenshot.datetime") as clock,
+                patch("wemo2.collectors.windows.screenshot.datetime") as clock,
             ):
                 clock.now.return_value = instant.astimezone(ZoneInfo(timezone))
                 frame = WindowsScreenshotter(self.path, timezone).capture(self.surface)
@@ -510,7 +515,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             surface=self.surface,
             image_path=path,
         )
-        with patch("wemo2_collector.validation.datetime") as clock:
+        with patch("wemo2.collectors.validation.datetime") as clock:
             clock.now.return_value = now
             validate_frame(frame)
             clock.now.return_value = now + timedelta(seconds=5)

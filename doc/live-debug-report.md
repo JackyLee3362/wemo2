@@ -58,7 +58,7 @@ Airtest 只寻找这个几何位置内的最佳候选，避免在极小搜索区
 uv run wemo2 --config wemo2.moments.toml
 ```
 
-VS Code 选择 `wemo2_collector: 调试朋友圈路由` 后按 F5，使用同一朋友圈配置。
+VS Code 选择 `wemo2.collectors: 调试朋友圈路由` 后按 F5，使用同一朋友圈配置。
 默认最多 20 帧；通过配置文件调整 max_screens，不增加业务 CLI 选项。
 
 ## 验证边界

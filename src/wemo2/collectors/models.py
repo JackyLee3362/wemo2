@@ -1,5 +1,6 @@
 """平台和界面识别的数据结构，不依赖具体 UI/OCR 库。"""
 
+from datetime import date
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -7,6 +8,18 @@ from uuid import uuid4
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from wemo2.models import Platform
+
+
+class MomentDetails(BaseModel):
+    """从截图识别的发布信息和裁剪边界；未知日期和不完整文案须保持未知语义。"""
+
+    model_config = ConfigDict(extra="forbid")
+    person: str | None = None
+    text: str | None = None
+    text_status: Literal["unknown", "partial", "complete"] = "unknown"
+    approximate_date: date | None = None
+    date_raw: str | None = None
+    header_top: int | None = None  # 图像内头像顶部，只供采集端裁剪使用。
 
 
 class Rect(BaseModel):

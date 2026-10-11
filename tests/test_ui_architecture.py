@@ -8,14 +8,11 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from pydantic import ValidationError
 
-from wemo2.composition import build_coordinator
-from wemo2.config import AppConfig, load_config
-from wemo2.pseudo import PseudoCollector
-from wemo2.registry import collectors
-from wemo2_collector import validation
-from wemo2_collector.controller import UiController
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.models import (
+from wemo2.app import run_collect
+from wemo2.collectors import validation
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.models import (
     ActionResult,
     ControllerConfig,
     MatchConfig,
@@ -25,8 +22,11 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
-from wemo2_collector.profiles import PageSpec, RouteSpec, UiProfile, build_profile
-from wemo2_collector.routing import PageRouter
+from wemo2.collectors.profiles import PageSpec, RouteSpec, UiProfile, build_profile
+from wemo2.collectors.routing import PageRouter
+from wemo2.config import AppConfig, load_config
+from wemo2.pseudo import PseudoCollector
+from wemo2.registry import collectors
 
 
 class UiArchitectureTests(unittest.TestCase):
@@ -108,7 +108,7 @@ class UiArchitectureTests(unittest.TestCase):
             ),
         ]
         router = PageRouter(interaction, self.profile, RouteConfig())
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             self.assertEqual(router.run("custom_action"), custom)
         self.assertEqual(interaction.click.call_args_list[0].args[0], "moments_entry")
         self.assertEqual(interaction.click.call_args_list[1].args[0], "custom_button")
@@ -229,7 +229,7 @@ class UiArchitectureTests(unittest.TestCase):
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom):
                     self.assertFalse(
-                        (node.module or "").startswith("wemo2_collector"), path.name
+                        (node.module or "").startswith("wemo2.collectors"), path.name
                     )
 
     def test_ui_paths_are_resolved_by_collector_from_file_directory(self):
@@ -261,26 +261,27 @@ class UiArchitectureTests(unittest.TestCase):
         class CustomCollector(PseudoCollector):
             """接收任意专属参数，验证新增采集器不需要修改应用配置模型。"""
 
-            def __init__(self, custom):
+            def __init__(self, custom, resource_dir):
                 received.append(custom)
-                super().__init__()
+                super().__init__(resource_dir)
 
         def prepare(options, directory):
             return {"custom": options["custom"]}
 
         with patch.dict(collectors._components):
             collectors.register(
-                "custom-options", CustomCollector, prepare_options=prepare
+                "custom-options",
+                CustomCollector,
+                prepare_options=prepare,
+                parameters={"resource_dir": "resource_dir"},
             )
             config = AppConfig(
                 collector="custom-options",
                 collector_options={"custom": {"arbitrary": 42}},
             )
-            coordinator = build_coordinator(
-                config.collector, collector_options=config.collector_options
-            )
-            with coordinator.store:
-                self.assertEqual(coordinator.run().created, 2)
+            with tempfile.TemporaryDirectory() as directory:
+                config = config.model_copy(update={"resource_dir": Path(directory)})
+                self.assertEqual(run_collect(config).posts, 1)
             self.assertEqual(received, [{"arbitrary": 42}])
 
     def test_profile_paths_handle_cycles_and_missing_destinations(self):
@@ -311,7 +312,7 @@ class UiArchitectureTests(unittest.TestCase):
         for timezone in ("Asia/NotARealPlace", "/Asia/Shanghai", ""):
             with self.subTest(timezone=timezone):
                 with patch(
-                    "wemo2_collector.windows.driver.WindowsDriver.attach"
+                    "wemo2.collectors.windows.driver.WindowsDriver.attach"
                 ) as attach:
                     with self.assertRaises(ValidationError):
                         AppConfig(

@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from wemo2_collector.models import Direction, LocatedTarget, Screenshot, Surface
+from wemo2.collectors.models import Direction, LocatedTarget, Screenshot, Surface
 
 
 class BaseDriver(ABC):

@@ -6,10 +6,10 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
-from wemo2_collector import validation
-from wemo2_collector.controller import UiController
-from wemo2_collector.locating import AirtestLocator
-from wemo2_collector.models import (
+from wemo2.collectors import validation
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.locating import AirtestLocator
+from wemo2.collectors.models import (
     ControllerConfig,
     Expectation,
     LocatedTarget,
@@ -21,9 +21,9 @@ from wemo2_collector.models import (
     Surface,
     ValidationResult,
 )
-from wemo2_collector.profiles import build_profile
-from wemo2_collector.routing import PageRouter
-from wemo2_collector.windows.driver import WindowsDriver
+from wemo2.collectors.profiles import build_profile
+from wemo2.collectors.routing import PageRouter
+from wemo2.collectors.windows.driver import WindowsDriver
 
 
 class RoutingTests(unittest.TestCase):
@@ -188,7 +188,7 @@ class RoutingTests(unittest.TestCase):
     def test_route_timeout_does_not_repeat_click(self):
         router = self.make_router()
         with (
-            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
+            patch("wemo2.collectors.controller.time.monotonic", side_effect=[0, 6]),
             patch.object(
                 validation,
                 "evaluate",
@@ -253,7 +253,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_menu_action_clicks_once_then_verifies_selection(self):
         router = self.make_router(already_open=True)
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             self.assertEqual(router.run("moments_entry"), self.frame)
         router.controller.driver.click.assert_called_once()
         clicked = router.controller.driver.click.call_args.args[1]
@@ -282,8 +282,8 @@ class RoutingTests(unittest.TestCase):
 
         router.controller.locator.locate.side_effect = locate
         with (
-            patch("wemo2_collector.controller.time.sleep"),
-            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
+            patch("wemo2.collectors.controller.time.sleep"),
+            patch("wemo2.collectors.controller.time.monotonic", side_effect=[0, 6]),
         ):
             with self.assertRaisesRegex(RuntimeError, "超时"):
                 router.run("moments_entry")
@@ -341,7 +341,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_action_follows_both_navigation_steps_without_repeating_clicks(self):
         router = self.make_router()
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             router.run("moments_entry")
         self.assertEqual(router.controller.driver.click.call_count, 2)
         self.assertEqual(
@@ -355,7 +355,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_discovery_restores_moments_and_skips_redundant_menu_click(self):
         router = self.make_router(restore_moments=True)
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             self.assertEqual(router.run("moments_entry"), self.frame)
         router.controller.driver.click.assert_called_once()
         self.assertEqual(router.last_result.status, "verified")
@@ -368,7 +368,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_open_discovery_action_accepts_restored_child_but_ensure_stays_exact(self):
         router = self.make_router(restore_moments=True)
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             self.assertEqual(router.run("discover"), self.frame)
         router.controller.driver.click.assert_called_once()
         router = self.make_router(already_selected=True)
@@ -376,8 +376,8 @@ class RoutingTests(unittest.TestCase):
         router.controller.driver.click.assert_not_called()
         router = self.make_router(restore_moments=True)
         with (
-            patch("wemo2_collector.controller.time.sleep"),
-            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
+            patch("wemo2.collectors.controller.time.sleep"),
+            patch("wemo2.collectors.controller.time.monotonic", side_effect=[0, 6]),
         ):
             with self.assertRaisesRegex(RuntimeError, "超时"):
                 router.ensure("discover")
@@ -385,7 +385,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_recovery_pages_are_explicit_and_unverified_pages_are_rejected(self):
         locator = MagicMock()
-        with patch("wemo2_collector.validation.detect_page", return_value="home"):
+        with patch("wemo2.collectors.validation.detect_page", return_value="home"):
             checked = validation.evaluate(
                 self.frame,
                 self.frame,

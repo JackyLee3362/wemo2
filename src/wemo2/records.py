@@ -1,21 +1,12 @@
 """每条朋友圈的本地归档契约，不包含窗口操作实现。"""
 
+import hashlib
+import json
+import unicodedata
 from datetime import date
 from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-
-
-class MomentDetails(BaseModel):
-    """从截图识别的发布信息；未知不冒充空文案，粗略日期不冒充精确时间。"""
-
-    model_config = ConfigDict(extra="forbid")
-    person: str | None = None
-    text: str | None = None
-    text_status: Literal["unknown", "partial", "complete"] = "unknown"
-    approximate_date: date | None = None
-    date_raw: str | None = None
-    header_top: int | None = None  # 图像内人物头像顶部，用于去掉封面和前条评论。
 
 
 class ArchiveMedia(BaseModel):
@@ -63,3 +54,13 @@ class MomentRecord(BaseModel):
     media: list[ArchiveMedia] = Field(default_factory=list)
     evidence: list[MomentEvidence] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+def moment_key(person: str | None, text: str | None, text_status: str) -> str | None:
+    """按人物和完整文案生成身份键；未知和截断正文不参与本地归档合并。"""
+    if not person or not person.strip() or text is None or text_status != "complete":
+        return None
+    person = " ".join(unicodedata.normalize("NFC", person).split())
+    text = " ".join(unicodedata.normalize("NFC", text).split())
+    payload = json.dumps([person, text], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

@@ -9,11 +9,16 @@ from loguru import logger
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from wemo2_collector import validation
-from wemo2_collector.controller import UiController
-from wemo2_collector.media_navigation import ViewerSession, image_save_strategy
-from wemo2_collector.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
-from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
+from wemo2.collectors import validation
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.media_navigation import ViewerSession, image_save_strategy
+from wemo2.collectors.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
+from wemo2.collectors.recognition import (
+    TextLine,
+    TextRecognizer,
+    file_kind,
+    media_tiles,
+)
 
 
 class SavedMedia(BaseModel):

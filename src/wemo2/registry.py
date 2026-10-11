@@ -7,14 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from wemo2.collector import JsonCollector
-from wemo2.collector_config import load_json_options, load_pseudo_options
-from wemo2.deduplicator import Deduplicator
-from wemo2.interfaces import BaseCollector, BaseDeduplicator, BaseStore
-from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
-from wemo2.store import SQLiteStore
-from wemo2_collector.collector import WindowsScreenshotCollector
-from wemo2_collector.config import load_windows_options
+from wemo2.collectors.collector import WindowsScreenshotCollector
+from wemo2.collectors.config import load_windows_options
+from wemo2.interfaces import BaseCollector, BaseStore
+from wemo2.pseudo import PseudoCollector, PseudoStore
 
 
 class ComponentSpec(BaseModel):
@@ -24,7 +20,6 @@ class ComponentSpec(BaseModel):
     implementation: type
     parameters: dict[str, str] = Field(default_factory=dict)
     optional_parameters: dict[str, str] = Field(default_factory=dict)
-    defaults: dict[str, str] = Field(default_factory=dict)
     notice: str | None = None
 
 
@@ -45,7 +40,6 @@ class ComponentRegistry:
         prepare_options: Callable[[dict, Path], dict] | None = None,
         parameters: dict[str, str] | None = None,
         optional_parameters: dict[str, str] | None = None,
-        defaults: dict[str, str] | None = None,
         default: bool = False,
         notice: str | None = None,
     ) -> None:
@@ -67,7 +61,6 @@ class ComponentRegistry:
             prepare_options=prepare_options,
             parameters=parameters or {},
             optional_parameters=optional_parameters or {},
-            defaults=defaults or {},
             notice=notice,
         )
         self._components[name] = spec
@@ -118,31 +111,30 @@ class ComponentRegistry:
 
 
 collectors = ComponentRegistry("采集器", BaseCollector)
-deduplicators = ComponentRegistry("去重器", BaseDeduplicator)
 stores = ComponentRegistry("存储器", BaseStore)
+MEMOS_STORE = "memos"
 
-# 新增内置实现只需在这里导入并注册，不修改 CLI、配置模型或协调器。
-IMPORT_COLLECTOR = "json"
-collectors.register(
-    "pseudo", PseudoCollector, default=True, prepare_options=load_pseudo_options
-)
-collectors.register(
-    IMPORT_COLLECTOR,
-    JsonCollector,
-    prepare_options=load_json_options,
-    defaults={"deduplicator": "stable", "store": "sqlite"},
-)
-deduplicators.register("pseudo", PseudoDeduplicator, default=True)
+# 去重只存在于采集器归档阶段；Memos 暂以模拟存储占位，不发起网络请求。
 collectors.register(
     "windows_screenshot",
     WindowsScreenshotCollector,
+    default=True,
     prepare_options=load_windows_options,
+    parameters={"resource_dir": "resource_dir", "account": "account"},
 )
-deduplicators.register("stable", Deduplicator)
+collectors.register(
+    "pseudo",
+    PseudoCollector,
+    parameters={"resource_dir": "resource_dir", "account": "account"},
+)
 stores.register(
     "pseudo",
     PseudoStore,
     default=True,
-    notice="模拟存储：结果仅保留在内存中。",
+    notice="模拟保存：仅在内存中处理归档，未写入远端。",
 )
-stores.register("sqlite", SQLiteStore, parameters={"path": "database"})
+stores.register(
+    MEMOS_STORE,
+    PseudoStore,
+    notice="Memos 0.31 尚未接入：本次使用模拟存储，未上传任何数据。",
+)

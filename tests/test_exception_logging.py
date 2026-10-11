@@ -10,12 +10,16 @@ from PIL import Image
 from typer.testing import CliRunner
 
 from wemo2.cli import cli
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.models import (
+    ControllerConfig,
+    Platform,
+    Rect,
+    Screenshot,
+    Surface,
+)
+from wemo2.collectors.profiles import UiProfile
 from wemo2.logging import add_file_sink, initialize_startup_logging
-from wemo2.pseudo import PseudoStore
-from wemo2.store import SQLiteStore
-from wemo2_collector.controller import UiController
-from wemo2_collector.models import ControllerConfig, Platform, Rect, Screenshot, Surface
-from wemo2_collector.profiles import UiProfile
 
 
 class ExceptionLoggingTests(unittest.TestCase):
@@ -62,7 +66,7 @@ class ExceptionLoggingTests(unittest.TestCase):
             encoding="utf-8",
         )
         with patch("wemo2.config.Path.cwd", return_value=self.path):
-            result = CliRunner().invoke(cli, ["--config", str(config)])
+            result = CliRunner().invoke(cli, ["collect", "--config", str(config)])
         self.assertEqual(result.exit_code, 2)
         self.assertNotIn("Traceback", result.stderr)
         log = (self.path / "logs/wemo2.log").read_text(encoding="utf-8")
@@ -75,7 +79,9 @@ class ExceptionLoggingTests(unittest.TestCase):
         blocked = self.path / "blocked"
         blocked.write_text("file", encoding="utf-8")
         with patch("wemo2.config.Path.cwd", return_value=self.path):
-            result = CliRunner().invoke(cli, ["--log-file", str(blocked / "run.log")])
+            result = CliRunner().invoke(
+                cli, ["collect", "--log-file", str(blocked / "run.log")]
+            )
         self.assertEqual(result.exit_code, 1)
         self.assertNotIn("Traceback", result.stderr)
         log = (self.path / "logs/wemo2.log").read_text(encoding="utf-8")
@@ -133,23 +139,12 @@ class ExceptionLoggingTests(unittest.TestCase):
             UiProfile(),
             ControllerConfig(capture_attempts=2),
         )
-        with patch("wemo2_collector.controller.time.sleep"):
+        with patch("wemo2.collectors.controller.time.sleep"):
             self.assertEqual(controller.capture(), frame)
         log = self.log.read_text(encoding="utf-8")
         self.assertIn("第 1/2 次", log)
         self.assertIn("OSError: temporary capture failure", log)
         driver.click.assert_not_called()
-
-    def test_transaction_rollback_logs_and_reraises_original_error(self):
-        for store in (PseudoStore(), SQLiteStore(self.path / "store.sqlite3")):
-            with store:
-                with self.assertRaisesRegex(ValueError, "transaction failure"):
-                    with store.transaction():
-                        raise ValueError("transaction failure")
-        log = self.log.read_text(encoding="utf-8")
-        self.assertIn("内存事务失败", log)
-        self.assertIn("SQLite 事务失败", log)
-        self.assertIn("ValueError: transaction failure", log)
 
     def test_help_and_version_do_not_initialize_startup_log(self):
         with patch("wemo2.cli.initialize_startup_logging") as initialize:

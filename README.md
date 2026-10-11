@@ -31,13 +31,13 @@ uv run wemo2
 uv run wemo2 --config wemo2.moments.toml
 ```
 
-VS Code 可选择“wemo2_collector: 调试朋友圈路由”按 F5。
+VS Code 可选择“wemo2.collectors: 调试朋友圈路由”按 F5。
 默认先验证发现菜单，再定位并点击“朋友圈”一行，验证绿色背景、白色图标和文字的选中样式。
 如果已选中朋友圈，则保存当前截图并跳过点击。
 `wemo2.moments.toml` 还会继续按锚点截图、识别昵称和执行媒体另存为；默认最多 20 帧。
 已在发现页时不重复点击指南针；匹配不唯一或跳转超时会报错。
 
-页面、主题、模板及导航关系统一在 `src/wemo2_collector/profiles.py` 的 `UiProfile` 中维护。
+页面、主题、模板及导航关系统一在 `src/wemo2/collectors/profiles.py` 的 `UiProfile` 中维护。
 `[collector_options.route]` 控制动作及超时，`[collector_options.matcher]` 控制匹配阈值；
 窗口、主题等设置放在 `[collector_options]`。模板参考缩放为 125%，当前只提供深色模板。
 朋友圈动态列表仍没有验证特征，不能把一次点击当作已验证到达。
@@ -60,11 +60,11 @@ VS Code 调试入口为项目根目录的 `main.py`。先执行 `uv sync`，安�
 Python 和 Python Debugger 扩展，再按 F5 选择“wemo2: 调试 CLI”。配置使用项目
 `.venv` 中的 Windows Python；可修改 `.vscode/launch.json` 的 `args` 传入命令行选项。
 
-独立调试采集器：在 VS Code 的运行与调试列表中选择“wemo2_collector: 调试微信截图”，
-再按 F5。入口为 `src/wemo2_collector/main.py`，读取根目录的 `wemo2.screenshot.toml`，
+独立调试采集器：在 VS Code 的运行与调试列表中选择“wemo2.collectors: 调试微信截图”，
+再按 F5。入口为 `src/wemo2/collectors/main.py`，读取根目录的 `wemo2.screenshot.toml`，
 只执行采集器，不创建去重器或存储器；截图仍保存到 `data/screenshot`。
 可在 `collector.py`、`windows/driver.py`、`windows/screenshot.py` 中设置断点。
-也可运行 `uv run python -m wemo2_collector.main`。
+也可运行 `uv run python -m wemo2.collectors.main`。
 
 先运行完全由模拟组件组成的流程，无需文件、微信或数据库：
 
@@ -188,8 +188,8 @@ TOML 使用 `duplicate_stop` 和 `duplicate_limit`，遵循配置文件 > 默认
 
 ## 添加组件实现
 
-界面采集架构与接口骨架位于 `src/wemo2_collector/`，详见
-[采集器架构](src/wemo2_collector/ARCHITECTURE.md)。平台配置经组装入口与注册表传给采集器，
+界面采集架构与接口骨架位于 `src/wemo2/collectors/`，详见
+[采集器架构](src/wemo2/collectors/ARCHITECTURE.md)。平台配置经组装入口与注册表传给采集器，
 不增加 CLI 选项。后续实现将按平台驱动、页面路由、截图、定位、文字识别和卡片解析拆分。
 
 组件名称和实现类统一维护在 `src/wemo2/registry.py`。新实现继承对应抽象类后，
@@ -229,8 +229,8 @@ Windows 截图与导航使用 Airtest，已移除 uiautomation。执行 `uv sync
 可以继续使用 VS Code 中的截图、朋友圈入口调试配置，或运行：
 
 ```powershell
-uv run python -m wemo2_collector.main
-uv run python -m wemo2_collector.moments_main
+uv run python -m wemo2.collectors.main
+uv run python -m wemo2.collectors.moments_main
 ```
 
 截图保存在 `data/screenshot`，包括客户区 PNG 和 JSON 元数据。窗口需要可见且无遮挡。
@@ -241,7 +241,7 @@ Airtest 当前依赖 NumPy 1.x 与 OpenCV contrib 4.6，不再同时安装 openc
 
 ## 采集器专属配置与组件边界
 
-应用层只接收通用配置字典，页面与截图参数全部由 `wemo2_collector` 维护：
+应用层只接收通用配置字典，页面与截图参数全部由 `wemo2.collectors` 维护：
 
 ```toml
 collector = "windows_screenshot"
@@ -268,7 +268,7 @@ threshold = 0.9
 
 一个 `UiProfile` 管理页面、路由和各主题的目标模板，`AirtestLocator` 输出匹配位置，
 `UiController` 统一输入与证据，`validation.py` 的函数判断预期。扩展方式见
-[采集器架构](src/wemo2_collector/ARCHITECTURE.md)。
+[采集器架构](src/wemo2/collectors/ARCHITECTURE.md)。
 
 ## 界面控制器与动作结果
 
@@ -334,7 +334,7 @@ height = 663
 
 媒体流程是 **点击预览 → 验证查看器 → 右键 → OCR 定位“另存为” → 标准 Windows 另存为对话框 → 校验文件 → 返回原列表**。
 流程步骤、OCR 候选文字、阈值和查看器相对区域统一维护在
-`src/wemo2_collector/profiles.py` 的 `media_workflows` / `media_targets` 中。
+`src/wemo2/collectors/profiles.py` 的 `media_workflows` / `media_targets` 中。
 `UiController.run_media_workflow()` 读取步骤定义，校验前置状态、执行一次输入并等待后置条件。
 `MediaCapture` 负责预览缓存、文件校验、哈希及卡片关联，菜单变化无需修改其流程代码。
 每个动作证据包含 `workflow` 流程名和 `name` 步骤名；识别失败、保存或返回失败即停止并保留已执行事实。

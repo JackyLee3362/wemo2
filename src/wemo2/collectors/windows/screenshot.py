@@ -7,10 +7,10 @@ from uuid import uuid4
 
 from PIL import Image
 
-from wemo2_collector.models import Platform, Screenshot, Surface
-from wemo2_collector.timezones import resolve_timezone
-from wemo2_collector.validation import validate_image
-from wemo2_collector.windows.backend import create_device
+from wemo2.collectors.models import Platform, Screenshot, Surface
+from wemo2.collectors.timezones import resolve_timezone
+from wemo2.collectors.validation import validate_image
+from wemo2.collectors.windows.backend import create_device
 
 
 class WindowsScreenshotter:

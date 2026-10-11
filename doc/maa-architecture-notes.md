@@ -70,7 +70,7 @@ flowchart TD
 
 **wemo2 建议**
 
-现有 [UiProfile](D:/Project/wemo2/src/wemo2_collector/profiles.py) 已集中定义页面和导航，但 [MediaCapture](D:/Project/wemo2/src/wemo2_collector/media.py:69) 仍在函数中硬编码查看器、右键、另存为和返回流程。
+现有 [UiProfile](D:/Project/wemo2/src/wemo2/collectors/profiles.py) 已集中定义页面和导航，但 [MediaCapture](D:/Project/wemo2/src/wemo2/collectors/media.py:69) 仍在函数中硬编码查看器、右键、另存为和返回流程。
 
 先将这条媒体流程拆成少量数据步骤，共用 `UiController` 的执行、验证和证据能力。验证型步骤完成后才进入下一步；`ActionResult.executed` 不等于业务成功。
 
@@ -88,9 +88,9 @@ MAA 的候选优先匹配适合已知优先级的场景；wemo2 的点击目标�
 
 需要集中维护的现有规则包括：
 
-- [MediaCapture](D:/Project/wemo2/src/wemo2_collector/media.py:69) 中的另存为候选文字、OCR 阈值和查看器范围。
-- [TextRecognizer.nickname](D:/Project/wemo2/src/wemo2_collector/recognition.py:62) 中的顶部范围、头像相对位置、昵称颜色约束。
-- [media_tiles](D:/Project/wemo2/src/wemo2_collector/recognition.py:105) 中的媒体块尺寸、背景和布局参数。
+- [MediaCapture](D:/Project/wemo2/src/wemo2/collectors/media.py:69) 中的另存为候选文字、OCR 阈值和查看器范围。
+- [TextRecognizer.nickname](D:/Project/wemo2/src/wemo2/collectors/recognition.py:62) 中的顶部范围、头像相对位置、昵称颜色约束。
+- [media_tiles](D:/Project/wemo2/src/wemo2/collectors/recognition.py:105) 中的媒体块尺寸、背景和布局参数。
 
 OpenCV、RapidOCR 继续负责算法；微信版本、主题和布局参数由采集资源负责。
 
@@ -106,7 +106,7 @@ OpenCV、RapidOCR 继续负责算法；微信版本、主题和布局参数由�
 
 **wemo2 建议**
 
-使用当前 `Screenshot.frame_id` 作为只读识别缓存的边界。同一帧的页面标志、锚点和 OCR 可以复用加载后的图像，减少 [AirtestLocator](D:/Project/wemo2/src/wemo2_collector/locating.py) 的重复文件读取。
+使用当前 `Screenshot.frame_id` 作为只读识别缓存的边界。同一帧的页面标志、锚点和 OCR 可以复用加载后的图像，减少 [AirtestLocator](D:/Project/wemo2/src/wemo2/collectors/locating.py) 的重复文件读取。
 
 区分三种缓存：
 
@@ -146,7 +146,7 @@ Windows 的滚轮不能被解释为 Android 的触摸滑动；Windows 的右键�
 
 Rich CLI 消费这些事件显示进度，Loguru 记录详细日志。将来增加 Tkinter 时仍消费同一事件，不把窗口定位或截图字段加入 `wemo2.AppConfig`。
 
-保持动作结果、日志和进度三者用途明确。停止原因应使用结构化值，不依赖当前 [FeedCapture](D:/Project/wemo2/src/wemo2_collector/feed.py:136) 对中文错误字符串前缀的判断。
+保持动作结果、日志和进度三者用途明确。停止原因应使用结构化值，不依赖当前 [FeedCapture](D:/Project/wemo2/src/wemo2/collectors/feed.py:136) 对中文错误字符串前缀的判断。
 
 第一版可使用普通回调函数；没有跨线程需求时不引入事件总线或消息队列。
 
@@ -288,7 +288,7 @@ flowchart LR
 
 当前 `WindowsScreenshotCollector` 仍返回空 Observation 列表。后续应在一条动态的数据足以形成明确观察事实后逐条产出，让协调器有机会反馈重复停止；不能先滚动并下载全部内容，最后才让去重器判断是否停止。
 
-昵称和截图指纹不足以提供微信稳定动态 ID。无法确定的字段保留未知或不完整，原图、预览图和视频文件不能互相冒充。页面步骤定义始终留在 `wemo2_collector`，应用只接收已有数据契约和通用进度信息。
+昵称和截图指纹不足以提供微信稳定动态 ID。无法确定的字段保留未知或不完整，原图、预览图和视频文件不能互相冒充。页面步骤定义始终留在 `wemo2.collectors`，应用只接收已有数据契约和通用进度信息。
 
 ## 7. 建议实施顺序
 

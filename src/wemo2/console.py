@@ -1,36 +1,36 @@
-"""Rich 终端展示；运行日志由 Loguru 单独写入文件。"""
+"""Rich 命令结果展示，日志详情由 Loguru 写入文件。"""
 
 from pathlib import Path
 
 from rich.console import Console
-from rich.table import Table
 from rich.text import Text
 
-from wemo2.models import RunResult
+from wemo2.models import CollectResult, SaveResult
 
 console = Console()
 error_console = Console(stderr=True)
 
 
-def show_result(result: RunResult, storage_notice: str | None, log_file: Path) -> None:
-    table = Table(title="采集完成")
-    table.add_column("读取", justify="right")
-    table.add_column("新增", justify="right")
-    table.add_column("更新", justify="right")
-    table.add_column("未变更", justify="right")
-    table.add_column("重复", justify="right")
-    table.add_row(
-        str(result.collected),
-        str(result.created),
-        str(result.merged),
-        str(result.unchanged),
-        str(result.duplicates),
+def show_collect_result(result: CollectResult, log_file: Path) -> None:
+    """展示本次归档数量、停止原因和文件位置，不能声称已经上传远端。"""
+    console.print(
+        Text(
+            f"采集完成：本次归档 {result.posts} 条朋友圈，停止原因：{result.stop_reason}"
+        )
     )
-    console.print(table)
     for path in result.artifacts:
-        console.print(Text(f"采集文件已保存：{path}"))
-    if result.stop_reason == "duplicate_limit":
-        console.print("已按重复停止策略结束采集。", style="yellow")
-    if storage_notice is not None:
-        console.print(storage_notice, style="yellow")
+        if path.name == "post.json":
+            console.print(Text(f"朋友圈目录：{path.parent}"))
+    console.print(Text(f"日志文件：{log_file}"))
+
+
+def show_save_result(result: SaveResult, notice: str | None, log_file: Path) -> None:
+    """说明目标存储和模拟状态，成功仅代表存储实现正常返回。"""
+    console.print(
+        Text(
+            f"保存流程完成：{result.posts} 条朋友圈，{result.media} 个媒体文件，目标：{result.store}"
+        )
+    )
+    if notice is not None:
+        console.print(Text(notice, style="yellow"))
     console.print(Text(f"日志文件：{log_file}"))

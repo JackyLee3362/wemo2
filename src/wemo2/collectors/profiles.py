@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from wemo2_collector.models import Rect, Surface
+from wemo2.collectors.models import Rect, Surface
 
 
 class PageSpec(BaseModel):

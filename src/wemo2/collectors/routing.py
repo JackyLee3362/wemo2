@@ -1,8 +1,8 @@
 """通用页面路由：通过注册的页面标志和有向路由执行导航。"""
 
-from wemo2_collector.controller import UiActionError, UiController
-from wemo2_collector.models import ActionResult, Expectation, RouteConfig, Screenshot
-from wemo2_collector.profiles import RouteSpec, UiProfile
+from wemo2.collectors.controller import UiActionError, UiController
+from wemo2.collectors.models import ActionResult, Expectation, RouteConfig, Screenshot
+from wemo2.collectors.profiles import RouteSpec, UiProfile
 
 
 class PageRouter:

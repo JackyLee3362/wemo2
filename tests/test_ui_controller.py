@@ -7,9 +7,9 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from pydantic import ValidationError
 
-from wemo2_collector import validation
-from wemo2_collector.controller import UiController
-from wemo2_collector.models import (
+from wemo2.collectors import validation
+from wemo2.collectors.controller import UiController
+from wemo2.collectors.models import (
     ActionResult,
     ControllerConfig,
     Expectation,
@@ -19,8 +19,8 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
-from wemo2_collector.profiles import PageSpec, UiProfile
-from wemo2_collector.windows.driver import WindowsDriver
+from wemo2.collectors.profiles import PageSpec, UiProfile
+from wemo2.collectors.windows.driver import WindowsDriver
 
 
 class UiControllerTests(unittest.TestCase):
@@ -60,7 +60,7 @@ class UiControllerTests(unittest.TestCase):
             self.config,
             self.path / "actions",
         )
-        sleep = patch("wemo2_collector.controller.time.sleep")
+        sleep = patch("wemo2.collectors.controller.time.sleep")
         sleep.start()
         self.addCleanup(sleep.stop)
 
@@ -167,7 +167,7 @@ class UiControllerTests(unittest.TestCase):
         loading = self.make_frame("loading")
         self.capture.capture.side_effect = [self.before, loading, loading, loading]
         with patch(
-            "wemo2_collector.controller.time.monotonic", side_effect=[0, 0.1, 0.2, 6]
+            "wemo2.collectors.controller.time.monotonic", side_effect=[0, 0.1, 0.2, 6]
         ):
             result = self.controller.click(
                 "button", Expectation(kind="page", page="done")
@@ -284,7 +284,7 @@ class UiControllerTests(unittest.TestCase):
 
     def test_swipe_no_progress_times_out_without_reswiping(self):
         self.capture.capture.side_effect = [self.before, self.after]
-        with patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]):
+        with patch("wemo2.collectors.controller.time.monotonic", side_effect=[0, 6]):
             result = self.controller.swipe(
                 "button", "up", 20, Expectation(kind="change")
             )

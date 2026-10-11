@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from wemo2_collector.airtest_logging import configure_airtest_logging
+from wemo2.collectors.airtest_logging import configure_airtest_logging
 
 if TYPE_CHECKING:
     from airtest.core.win import Windows

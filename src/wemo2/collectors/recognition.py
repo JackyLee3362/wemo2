@@ -8,10 +8,9 @@ from pathlib import Path
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
-from wemo2_collector.airtest_logging import AirtestLogHandler
-from wemo2_collector.dates import approximate_day
-from wemo2_collector.models import Rect
-from wemo2_collector.records import MomentDetails
+from wemo2.collectors.airtest_logging import AirtestLogHandler
+from wemo2.collectors.dates import approximate_day
+from wemo2.collectors.models import MomentDetails, Rect
 
 
 class TextLine(BaseModel):

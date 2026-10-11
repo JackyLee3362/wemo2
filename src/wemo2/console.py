@@ -21,6 +21,8 @@ def show_collect_result(result: CollectResult, log_file: Path) -> None:
     for path in result.artifacts:
         if path.name == "post.json":
             console.print(Text(f"朋友圈目录：{path.parent}"))
+        elif result.posts == 0:
+            console.print(Text(f"采集文件已保存：{path}"))
     console.print(Text(f"日志文件：{log_file}"))
 
 

@@ -7,6 +7,7 @@
 - 使用 Python 3.12+ 和 uv 管理运行环境及依赖。运行依赖用 `uv add`，开发工具用 `uv add --dev`。
 - 当前优先实现 CLI，命令行使用 Typer，日志使用 Loguru；不添加 Tkinter 界面。
 - 组件间的数据结构使用 Pydantic 定义。模型写明用途，关键字段注明身份、时间、完整度等语义。
+- 归档目录使用 resource_dir/account/YYYY-MM-DD/person/hash。人物名通过 names.normalize_person 去除 emoji，再用于元信息和去重；原始人物名保留在 person_raw。目录通过 names.person_directory 清洗 Windows 非法字符。正文中的 emoji 不清洗。
 - 采集器和存储器实现各自的抽象接口。采集器负责本地归档及人物、文案去重，不设置独立去重器或协调器；collect 与 save 通过归档文件夹交付数据。
 - 组件名称与实现类统一在 `src/wemo2/registry.py` 注册；CLI、配置校验和组装入口读取注册表，不另外维护枚举或逐个实现的分支。注册时声明构造参数映射。
 - 界面采集的窗口、截图、主题、模板和路由字段只能定义在 `wemo2.collectors`；应用层使用通用 `collector_options` 转交配置，通过注册的 `prepare_options` 校验和解析相对路径。除唯一组件登记处 `registry.py` 外，应用和存储模块不导入界面采集实现或模型。共用 resource_dir、account 由应用配置维护，归档契约由 wemo2/records.py 定义。

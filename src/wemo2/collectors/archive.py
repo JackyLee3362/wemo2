@@ -2,13 +2,13 @@
 
 import hashlib
 import shutil
-from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
 from loguru import logger
 from PIL import Image
 
+from wemo2.archive_paths import resolve_moment_folder
 from wemo2.collectors.media import MediaCapture, SavedMedia
 from wemo2.collectors.models import (
     FeedCaptureResult,
@@ -16,6 +16,7 @@ from wemo2.collectors.models import (
     MomentDetails,
     Screenshot,
 )
+from wemo2.names import normalize_person
 from wemo2.records import (
     ArchiveMedia,
     MomentEvidence,
@@ -69,41 +70,14 @@ class MomentArchive:
                 raise
 
     def _folder(self, key: str | None, details: MomentDetails) -> Path:
-        day = (
-            "unknown_date"
-            if details.approximate_date is None
-            else details.approximate_date.isoformat()
+        folder, previous = resolve_moment_folder(
+            self.account_dir, details.person, details.approximate_date, key
         )
-        identifier = key or f"unidentified_{uuid4()}"
-        if key is not None:
-            matches = list(self.account_dir.glob(f"*/{key}/post.json"))
-            if len(matches) > 1:
-                raise RuntimeError("同账号存在多个相同去重键的文件夹，请先检查归档目录")
-            if matches:
-                folder = matches[0].parent
-                migrate_unknown = (
-                    folder.parent.name == "unknown_date" and day != "unknown_date"
-                )
-                migrate_compact_day = (
-                    len(folder.parent.name) == 8 and folder.parent.name.isdigit()
-                )
-                if migrate_unknown or migrate_compact_day:
-                    if migrate_compact_day:
-                        day = date.fromisoformat(folder.parent.name).isoformat()
-                    destination = self.account_dir / day / identifier
-                    root = self.account_dir.resolve()
-                    if not folder.resolve().is_relative_to(
-                        root
-                    ) or not destination.resolve().is_relative_to(root):
-                        raise RuntimeError("归档目录超出账号资源范围，未移动")
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    folder.rename(destination)
-                    for index, path in enumerate(self.paths):
-                        if path.is_relative_to(folder):
-                            self.paths[index] = destination / path.relative_to(folder)
-                    folder = destination
-                return folder
-        return self.account_dir / day / identifier
+        if previous is not None:
+            for index, path in enumerate(self.paths):
+                if path.is_relative_to(previous):
+                    self.paths[index] = folder / path.relative_to(previous)
+        return folder
 
     def _save(
         self,
@@ -114,6 +88,13 @@ class MomentArchive:
         media: MediaCapture,
         error: str | None,
     ) -> None:
+        raw_person = details.person
+        details.person = normalize_person(raw_person)
+        if (
+            details.person_raw is None
+            or normalize_person(details.person_raw) != details.person
+        ):
+            details.person_raw = raw_person
         key = moment_key(details.person, details.text, details.text_status)
         folder = self._folder(key, details)
         folder.mkdir(parents=True, exist_ok=True)
@@ -132,6 +113,7 @@ class MomentArchive:
                 account=self.account,
                 dedup_key=key,
                 person=details.person,
+                person_raw=details.person_raw,
                 text=details.text,
                 text_status=details.text_status,
                 approximate_date=details.approximate_date,

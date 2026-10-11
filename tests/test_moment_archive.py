@@ -1,4 +1,5 @@
 import hashlib
+import json
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta
@@ -103,7 +104,7 @@ class MomentArchiveTests(unittest.TestCase):
         return archive
 
     def record(self, account="账号A"):
-        paths = list((self.root / account).glob("*/*/post.json"))
+        paths = list((self.root / account).glob("*/*/*/post.json"))
         self.assertEqual(len(paths), 1)
         return paths[0], MomentRecord.model_validate_json(
             paths[0].read_text(encoding="utf-8")
@@ -122,8 +123,9 @@ class MomentArchiveTests(unittest.TestCase):
         )
         archive = self.export()
         path, record = self.record()
-        self.assertEqual(path.parent.parent.name, "2026-10-10")
-        self.assertEqual(path.parent.parent.parent.name, "账号A")
+        self.assertEqual(path.parent.parent.name, "张三")
+        self.assertEqual(path.parents[2].name, "2026-10-10")
+        self.assertEqual(path.parents[3].name, "账号A")
         self.assertEqual(record.person, "张三")
         self.assertEqual(record.text, "散步\n真开心")
         self.assertEqual(record.approximate_date, date(2026, 10, 10))
@@ -156,6 +158,66 @@ class MomentArchiveTests(unittest.TestCase):
         self.assertEqual(updated.first_seen_at, old.first_seen_at)
         self.assertEqual(updated.last_seen_at, self.frame.captured_at)
 
+    def test_requested_person_directory_and_emoji_free_metadata_deduplicate(self):
+        self.details.person = "朋友-牛哥🐮"
+        self.details.approximate_date = date(2026, 10, 11)
+        self.export("default")
+        path, record = self.record("default")
+        key = moment_key("朋友-牛哥", self.details.text, "complete")
+        self.assertEqual(
+            path, self.root / "default" / "2026-10-11" / "朋友-牛哥" / key / "post.json"
+        )
+        self.assertEqual(record.person, "朋友-牛哥")
+        self.assertEqual(record.person_raw, "朋友-牛哥🐮")
+        self.assertTrue((path.parent / record.primary_screenshot).is_file())
+        self.assertTrue((path.parent / record.media[0].path).is_file())
+        self.details.person = "朋友-牛哥"
+        self.export("default")
+        new, updated = self.record("default")
+        self.assertEqual(new, path)
+        self.assertEqual(len(updated.media), 1)
+
+    def test_legacy_emoji_identity_moves_without_losing_media_or_raw_name(self):
+        self.export("default")
+        path, record = self.record("default")
+        raw_name = "张三🐮"
+        payload = json.dumps(
+            [raw_name, "散步 真开心"], ensure_ascii=False, separators=(",", ":")
+        )
+        old_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        old = self.root / "default" / "2026-10-10" / old_key
+        path.parent.rename(old)
+        metadata = record.model_dump(mode="json")
+        metadata["person"] = raw_name
+        metadata.pop("person_raw")
+        metadata["post_id"] = old_key
+        metadata["dedup_key"] = old_key
+        (old / "post.json").write_text(
+            json.dumps(metadata, ensure_ascii=False), encoding="utf-8"
+        )
+        self.export("default")
+        new, updated = self.record("default")
+        self.assertFalse(old.exists())
+        self.assertEqual(new.parent.parent.name, "张三")
+        self.assertEqual(updated.person, "张三")
+        self.assertEqual(updated.person_raw, raw_name)
+        self.assertEqual(updated.post_id, new.parent.name)
+        self.assertEqual(
+            updated.dedup_key, moment_key("张三", updated.text, "complete")
+        )
+        self.assertEqual(
+            (new.parent / updated.media[0].path).read_bytes(),
+            self.saved.path.read_bytes(),
+        )
+
+    def test_emoji_only_person_uses_unknown_person_and_has_no_dedup_key(self):
+        self.details.person = "🐮"
+        self.export()
+        path, record = self.record()
+        self.assertEqual(path.parent.parent.name, "unknown_person")
+        self.assertIsNone(record.person)
+        self.assertIsNone(record.dedup_key)
+
     def test_default_account_and_iso_date_use_configured_resource_root(self):
         config = AppConfig(resource_dir=self.root)
         self.details.approximate_date = date(2026, 10, 11)
@@ -163,7 +225,9 @@ class MomentArchiveTests(unittest.TestCase):
         archive.export(self.result, self.media)
         path, record = self.record("default")
         key = moment_key(self.details.person, self.details.text, "complete")
-        self.assertEqual(path, self.root / "default" / "2026-10-11" / key / "post.json")
+        self.assertEqual(
+            path, self.root / "default" / "2026-10-11" / "张三" / key / "post.json"
+        )
         self.assertTrue((path.parent / record.media[0].path).is_file())
 
     def test_compact_date_directory_migrates_without_duplicate_metadata_or_lost_media(
@@ -171,12 +235,12 @@ class MomentArchiveTests(unittest.TestCase):
     ):
         self.export()
         path, record = self.record()
-        old = path.parent.parent.with_name("20261010") / path.parent.name
+        old = path.parents[2].with_name("20261010") / path.parent.name
         old.parent.mkdir()
         path.parent.rename(old)
         self.export()
         new, updated = self.record()
-        self.assertEqual(new.parent.parent.name, "2026-10-10")
+        self.assertEqual(new.parents[2].name, "2026-10-10")
         self.assertFalse(old.exists())
         self.assertEqual(updated.media, record.media)
         self.assertTrue((new.parent / updated.media[0].path).is_file())
@@ -200,19 +264,19 @@ class MomentArchiveTests(unittest.TestCase):
         self.details.approximate_date = None
         self.export()
         path, _ = self.record()
-        self.assertEqual(path.parent.parent.name, "unknown_date")
+        self.assertEqual(path.parents[2].name, "unknown_date")
         self.details.approximate_date = date(2026, 10, 10)
         self.export()
         new, record = self.record()
         self.assertFalse(path.exists())
-        self.assertEqual(new.parent.parent.name, "2026-10-10")
+        self.assertEqual(new.parents[2].name, "2026-10-10")
         self.assertTrue((new.parent / record.media[0].path).exists())
 
     def test_unknown_person_or_partial_text_are_preserved_without_dedup(self):
         self.details.text_status = "partial"
         self.export()
         self.export()
-        paths = list((self.root / "账号A").glob("*/*/post.json"))
+        paths = list((self.root / "账号A").glob("*/*/*/post.json"))
         self.assertEqual(len(paths), 2)
         for path in paths:
             record = MomentRecord.model_validate_json(path.read_text(encoding="utf-8"))
@@ -308,6 +372,28 @@ class MomentArchiveTests(unittest.TestCase):
 
 class MomentRecognitionTests(unittest.TestCase):
     """验证以采集时区推断到日，以及正文与图片文字、地点、评论的区分。"""
+
+    def test_ocr_name_fragments_are_cleaned_before_returning_details(self):
+        reader = TextRecognizer()
+        name = TextLine(
+            text="朋友-牛哥🐮",
+            score=0.99,
+            bounds=Rect(x=70, y=10, width=140, height=20),
+        )
+        footer = TextLine(
+            text="昨天", score=0.99, bounds=Rect(x=70, y=180, width=50, height=15)
+        )
+        reader.read = MagicMock(return_value=[name, footer])
+        reader.nickname = MagicMock(return_value=name)
+        with Image.new("RGB", (260, 250), (30, 30, 30)) as image:
+            image.paste((130, 145, 170), (70, 10, 210, 30))
+            details = reader.post_details(
+                image,
+                datetime(2026, 10, 11, 12, tzinfo=ZoneInfo("Asia/Shanghai")),
+                1.25,
+            )
+        self.assertEqual(details.person, "朋友-牛哥")
+        self.assertEqual(details.person_raw, "朋友-牛哥🐮")
 
     def test_relative_days_and_calendar_year_boundary(self):
         captured = datetime(2026, 1, 1, 0, 30, tzinfo=ZoneInfo("Asia/Shanghai"))

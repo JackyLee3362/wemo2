@@ -59,6 +59,21 @@ class ArchiveReaderTests(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertEqual(posts[0].record.account, "default")
 
+    def test_new_person_layout_and_legacy_layout_are_both_readable(self):
+        self.assertEqual(self.metadata.parent.parent.name, "示例人物")
+        previous = self.metadata
+        destination = self.metadata.parents[2] / self.metadata.parent.name
+        self.metadata.parent.rename(destination)
+        post = next(self.reader.read())
+        self.assertEqual(post.metadata_path, destination / "post.json")
+        self.assertFalse(previous.exists())
+
+    def test_new_layout_person_must_match_metadata(self):
+        self.record.person = "其他人物"
+        self.write()
+        with self.assertRaisesRegex(ValueError, "人物目录"):
+            list(self.reader.read())
+
     def test_missing_archive_and_primary_screenshot_fail(self):
         with self.assertRaisesRegex(FileNotFoundError, "请先执行 collect"):
             list(ArchiveReader(self.root, "missing").read())

@@ -68,14 +68,17 @@ class ComponentRegistry:
             self._default_name = name
 
     def names(self) -> list[str]:
+        """列出登记名称，供校验错误和配置说明引用。"""
         return list(self._components)
 
     def default_name(self) -> str:
+        """取得明确登记的默认实现，不凭名称或登记顺序猜测。"""
         if self._default_name is None:
             raise ValueError(f"{self.label}尚未设置默认实现")
         return self._default_name
 
     def get(self, name: str) -> ComponentSpec:
+        """查找登记项，未知名称提示当前全部可用实现。"""
         if name not in self._components:
             choices = "、".join(self.names())
             raise ValueError(f"未知{self.label}：{name}；可选：{choices}")
@@ -102,6 +105,7 @@ class ComponentRegistry:
         return arguments
 
     def validate(self, name: str, settings: dict) -> None:
+        """校验配置参数而不实例化组件，避免配置加载阶段启动采集。"""
         self._arguments(name, settings)
 
     def create(self, name: str, settings: dict) -> Any:

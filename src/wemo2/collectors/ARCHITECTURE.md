@@ -1,11 +1,16 @@
-# wemo2.collectors 架构
+# 采集模块架构（已合并进 wemo2）
+
+采集模块现位于 `src/wemo2/collectors`，由 `wemo2 collect` 运行。资源根目录与账号由共用 AppConfig 传入，采集模型只维护 UI 专属字段；MomentRecord 等本地元信息在 wemo2/records.py 中，截图裁剪用的 MomentDetails 留在 collectors/models.py。
+
+采集器直接完成本地归档合并，返回 CollectResult。`wemo2 save --memos` 只读取归档，不调用 UiController 或驱动；当前存储是 pseudo，Memos 0.31 实现延后。旧独立调试模块、Observation 交付、去重器和协调器已经删除，VS Code 统一调试根 main.py。
+
 
 状态：Windows 已接入截图、发现页导航、朋友圈选中验证、锚点分段、昵称 OCR 及媒体另存为流程。
-实际媒体查看器与另存为操作仍需实机验证；完整动态解析、Observation 转换及 Android 适配尚未完成。
+实际媒体查看器与另存为操作仍需实机验证；视觉识别完整度及 Android 适配仍需继续完善。
 
 ## 1. 精简后的边界
 
-`wemo2` 负责组件选择、日志、重复策略、去重及持久化。
+应用层负责组件选择、共用配置、日志及 collect/save 命令；本地去重在采集归档中完成。
 界面采集包自行解释 `collector_options`，应用不读取窗口、主题、模板或截图字段。
 唯一组件登记处绑定采集器与 `prepare_options`；校验配置不启动设备或创建输出文件。
 
@@ -156,7 +161,7 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 
 ## 6. 数据解析与验证
 
-当前采集器输出空 Observation 列表、本地截图、卡片清单和实际另存为文件，不生成假朋友圈数据。
+当前采集器交付 CollectResult、本地朋友圈目录、截图证据和实际另存为文件；不再输出 Observation。
 
 ## 7. 锚点分段与媒体采集
 
@@ -185,8 +190,7 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 图片检查可解码性；视频目前仅检查容器头，完整播放及最高质量原图尚需另行核验。
 卡片的 `media_detection=none_detected` 表示未识别到候选，不表示动态肯定没有媒体。
 菜单/另存为协议的实机兼容性仍需 F5 验证，视频特有的保存界面可能需要补充适配。
-未来 OCR 和卡片解析按实际需求实现，届时继续输出核心 Observation 契约。
-重复由去重器判断，UI 层不将截图重复当作动态重复。
+OCR 及卡片解析输出采集私有 MomentDetails；MomentArchive 通过人物与完整文案生成身份键并合并归档，不再经过独立去重器。截图重叠只是拼接证据，不直接作为朋友圈身份。
 
 测试覆盖 Airtest 实际模板匹配、DPI、歧义、页面状态、单次输入、时效、进展、
 配置边界、异常日志、证据保存和资源释放。纯自动测试不代表真实微信、多屏与皮肤均已联调。
@@ -221,12 +225,12 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 
 ## 9. 朋友圈资源归档
 
-`WindowsCollectorConfig` 新增 `resource_dir` 与 `account`。配置文件解析相对资源路径，
+共用 `AppConfig` 维护 `resource_dir` 与 `account`，由注册表传给采集器。配置文件解析相对资源路径，
 组装入口负责创建 `MomentArchive`，核心 wemo2 不解释目录布局或截图字段。
-输出层级为资源根目录 → 备份账号 → 推断的发布日期（YYYY-MM-DD） → 朋友圈身份键。
+输出层级为资源根目录 → 备份账号 → 推断的发布日期（YYYY-MM-DD） → 去除 emoji 后的人物名 → 朋友圈身份键。
 
 `TextRecognizer.post_details` 识别人名、文案、时间原文；`dates.approximate_day`
-以截图时区推断到日。`records.py` 定义 Pydantic 数据契约与相对资源引用。
+以截图时区推断到日。`wemo2/records.py` 定义 Pydantic 数据契约与相对资源引用。
 `FeedSegment.stream_start/stream_end` 关联已拼接动态与 `SavedPreview.stream_y`，
 使跨屏媒体进入所属朋友圈，而不依赖可见卡片是否完整。
 MediaCapture 也处理尚未出现结尾锚点的可见尾段，避免长动态的上排媒体滚出窗口后遗漏。
@@ -234,7 +238,7 @@ MediaCapture 也处理尚未出现结尾锚点的可见尾段，避免长动态�
 MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝媒体、最后原子替换 post.json。
 同账号的人物和完整文案用于本地归档去重；日期不参与身份键，媒体按实际字节哈希合并。
 未知人名或不完整文案不参与身份合并；未知日期保留 unknown_date。
-这是一条用户选择的本地留痕规则，未替代核心 Observation 的稳定源身份策略。
+这是一条用户选择的本地留痕规则，未替代已归档朋友圈的身份键。
 失败保留已下载文件和错误信息，媒体总数未知时不声明 media_complete=true。
 目录协议详见 `doc/moment-resources.md`。
 
@@ -252,3 +256,5 @@ MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝
 控制器允许从已验证的查看器继续媒体流程，并在实际保存文件为图片时保留查看器。切换方向键的输入、后置图片内容校验与退出均记录 ActionResult；独立查看器先核对原会话窗口归属，再用 Airtest 对照目标缩略图校验放大图。不能把画面任意变化或视频播放当成下一张。只有 switch_image 失败触发重开兜底，先验证退出回到原列表，再重新定位剩余候选；保存异常、窗口归属变化或退出失败均停止，不自动重发方向键或保存。
 
 ViewerSession 保存当前查看器证据和批次缓存起点。下载文件立即留下 SavedPreview 和卡片记录，整批成功返回列表后才标记 workflow_complete，避免失败批次被缓存误当作完成。视频保存后退出；左右键由 BaseDriver.switch_image 平台能力提供，WindowsDriver 使用 Airtest 的 keyevent。标准另存为对话框仍使用 Win32 控件，与方向键切换策略无关。
+
+人名规范化调用通用 names.normalize_person，原文保存在 person_raw。OCR 的蓝色昵称片段合并后再清洗 emoji，正文不受影响。MomentArchive 通过 archive_paths 生成账号/日期/人物/朋友圈目录，保存命令共享同一目录规范。

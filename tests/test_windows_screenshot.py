@@ -207,6 +207,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             result = CliRunner().invoke(cli, ["collect", "--config", str(config)])
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("采集完成", result.stdout)
+        self.assertIn("采集文件已保存", result.stdout)
         self.assertEqual(len(list((self.path / "captures").glob("*.png"))), 1)
         options = AppConfig(collector_options={"window_process_id": 42})
         source = collectors.create(options.collector, options.model_dump())

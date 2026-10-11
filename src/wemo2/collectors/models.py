@@ -8,6 +8,7 @@ from uuid import uuid4
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from wemo2.models import Platform
+from wemo2.names import normalize_person
 
 
 class MomentDetails(BaseModel):
@@ -15,11 +16,20 @@ class MomentDetails(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     person: str | None = None
+    person_raw: str | None = None
     text: str | None = None
     text_status: Literal["unknown", "partial", "complete"] = "unknown"
     approximate_date: date | None = None
     date_raw: str | None = None
     header_top: int | None = None  # 图像内头像顶部，只供采集端裁剪使用。
+
+    @model_validator(mode="after")
+    def normalize_name(self):
+        """去掉人物 emoji，保留 OCR 原文供归档留痕，不修改正文中的 emoji。"""
+        if self.person_raw is None:
+            self.person_raw = self.person
+        self.person = normalize_person(self.person)
+        return self
 
 
 class Rect(BaseModel):

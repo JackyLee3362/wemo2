@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 from PIL import Image, ImageDraw
 
+from wemo2.archive_paths import resolve_moment_folder
 from wemo2.interfaces import BaseCollector, BaseStore
 from wemo2.models import ArchivedPost, CollectResult
 from wemo2.records import MomentRecord, moment_key
@@ -25,13 +26,8 @@ class PseudoCollector(BaseCollector):
         """保存示例 JSON 和截图，用于离线验证 collect 到 save 的完整交付。"""
         now = datetime.now(ZoneInfo("Asia/Shanghai"))
         key = moment_key("示例人物", "这是一条模拟朋友圈。", "complete")
-        matches = list((self.resource_dir / self.account).glob(f"*/{key}/post.json"))
-        if len(matches) > 1:
-            raise RuntimeError("示例归档存在多个相同身份文件夹")
-        folder = (
-            matches[0].parent
-            if matches
-            else self.resource_dir / self.account / now.date().isoformat() / key
+        folder, _ = resolve_moment_folder(
+            self.resource_dir / self.account, "示例人物", now.date(), key
         )
         folder.mkdir(parents=True, exist_ok=True)
         metadata = folder / "post.json"

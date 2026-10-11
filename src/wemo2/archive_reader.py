@@ -6,7 +6,9 @@ from pathlib import Path
 
 from loguru import logger
 
+from wemo2.archive_paths import archive_metadata_paths
 from wemo2.models import ArchivedPost
+from wemo2.names import person_directory
 from wemo2.records import MomentRecord
 
 
@@ -19,7 +21,7 @@ class ArchiveReader:
 
     def read(self) -> Iterator[ArchivedPost]:
         """按日期、文件夹名称确定读取顺序；一条错误归档会停止本次保存。"""
-        paths = sorted(self.directory.glob("*/*/post.json"))
+        paths = archive_metadata_paths(self.directory)
         if not paths:
             raise FileNotFoundError(
                 f"未找到朋友圈归档：{self.directory}，请先执行 collect"
@@ -37,6 +39,10 @@ class ArchiveReader:
         record = MomentRecord.model_validate_json(path.read_text(encoding="utf-8"))
         if record.account != self.account or record.post_id != path.parent.name:
             raise ValueError("归档的账号或朋友圈 ID 与文件夹不一致")
+        if len(
+            path.relative_to(self.directory).parts
+        ) == 4 and path.parent.parent.name != person_directory(record.person):
+            raise ValueError("归档人物目录与元信息人名不一致")
         screenshot = self._file(path.parent, record.primary_screenshot)
         media_files = []
         for media in record.media:

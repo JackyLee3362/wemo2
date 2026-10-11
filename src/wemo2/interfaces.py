@@ -19,6 +19,7 @@ class BaseCollector(ABC):
 
     def stop(self) -> None:
         """释放本次采集会话，不关闭用户的数据源应用。"""
+        return None
 
 
 class BaseStore(ABC):
@@ -30,3 +31,4 @@ class BaseStore(ABC):
 
     def close(self) -> None:
         """释放存储资源，简单的内存实现无需额外处理。"""
+        return None

@@ -1,11 +1,12 @@
 # 朋友圈资源目录与元信息
 
-采集器配置负责所有资源路径，应用层仅转交 `collector_options`。
+共用 AppConfig 维护资源根目录及账号，collect 和 save 读取同一份配置。截图、主题和路由专属配置仍位于 collector_options 中。
 
 ```toml
-[collector_options]
 resource_dir = "data/moments"
 account = "default"
+
+[collector_options]
 timezone = "Asia/Shanghai"
 ```
 
@@ -15,16 +16,16 @@ Windows 非法路径字符和保留设备名在配置加载时拒绝。
 
 ```text
 data/moments/
-└── default/                         # 备份账号
-    └── 2026-10-08/                  # 推断的发布时间，精确到日
-        └── <人物与文案的 SHA-256>/   # 一条归档朋友圈
-            ├── post.json
-            ├── screenshot.png       # 主要朋友圈截图，可能是跨屏拼接图
-            ├── screenshots/         # 历次采集的截图证据，按图像内容去重
-            │   └── <hash>.png
-            └── media/               # 实际另存为的媒体，按文件字节去重
-                ├── <sha256>.jpg
-                └── <sha256>.mp4
+└── default/                         # 配置中的备份账号
+    └── 2026-10-11/                  # 推断的发布时间，精确到日
+        └── 朋友-牛哥/               # 去掉 emoji 的人物名
+            └── <人物与文案的 SHA-256>/
+                ├── post.json
+                ├── screenshot.png
+                ├── screenshots/    # 历次截图证据
+                └── media/          # 已保存的原图片、视频
+                    ├── <sha256>.jpg
+                    └── <sha256>.mp4
 ```
 
 日期无法识别时使用 `unknown_date`。人物或正文识别不完整时使用
@@ -33,7 +34,7 @@ data/moments/
 
 ## JSON 契约
 
-`records.py` 的 Pydantic 模型是唯一数据契约。以下为字段节选，不是完整的校验样例：
+`src/wemo2/records.py` 的 Pydantic 模型是唯一数据契约。以下为字段节选，不是完整的校验样例：
 
 ```json
 {
@@ -77,7 +78,7 @@ JSON 保留时间原文和时区，未知日期不拿采集当天冒充。
 
 ## 去重和完整度
 
-- 同账号内以规范化后的 `person + text` 去重：NFC Unicode、合并空白，用 JSON 数组编码两个字段后计算 SHA-256。
+- 同账号内以规范化后的 `person + text` 去重：人物先移除 emoji，再进行 NFC Unicode、合并空白，用 JSON 数组编码两个字段后计算 SHA-256；文案中的 emoji 不移除。
 - 日期不参与去重。同人物、同文案在另一天再次出现时复用已有目录，`observed_dates` 和 `evidence` 保留所有观察。
 - 不同人物或不同文案不会合并。未识别人名、未知文案或 partial 文案不生成身份键。
 - 明确空文案 `""` 参与去重，因此同人物的纯图片动态会合并媒体；这是“人物 + 文案”规则的直接结果。
@@ -90,6 +91,16 @@ JSON 保留时间原文和时区，未知日期不拿采集当天冒充。
 此版实现本地留痕，尚未将视觉记录转换为核心 Observation 或同步 Memos。
 视频归档支持已保存的文件；视频查看器和播放完整性仍需实机验证。
 
-日期目录统一为 `YYYY-MM-DD`，例如 `data/moments/default/2026-10-08/<人物与完整文案的 SHA-256>/`；JSON 日期使用相同格式。默认账号是 `default`，不是朋友圈作者；资源根目录由 `resource_dir` 配置，相对路径以配置文件目录为基准。已有相同去重键的旧 `YYYYMMDD` 目录在复用时整体迁移，保留截图及媒体。
+日期目录统一为 `YYYY-MM-DD`，例如 `data/moments/default/2026-10-11/朋友-牛哥/<人物与完整文案的 SHA-256>/`；JSON 日期使用相同格式。默认账号是 `default`，不是朋友圈作者；资源根目录由 `resource_dir` 配置，相对路径以配置文件目录为基准。已有相同去重键的旧 `YYYYMMDD` 目录在复用时整体迁移，保留截图及媒体。
 
 完整片段在当前屏的媒体保存后即归档，末尾未闭合片段在停止时归档；`screenshot_dir/cards_*/media/` 是下载暂存及调试证据，最终自包含资源位于上述账号目录。日期未知保留 `unknown_date`，人物/文案不完整保留 `unidentified_*`，不使用采集当天或截断正文伪造身份。
+
+## 保存命令
+
+`wemo2 collect --config wemo2.moments.toml` 生成并合并本地归档；`wemo2 save --memos --config wemo2.moments.toml` 读取同一资源目录和账号。去重已经由采集器完成，不再经过独立去重器。ArchiveReader 校验资源引用及媒体哈希后交给 BaseStore；--memos 当前选择 PseudoStore，只演示内存保存，不连接 Memos。后续目标版本为 0.31。
+
+## 人物名称规范
+
+`朋友-牛哥🐮` 规范为 `朋友-牛哥`，用于目录层级、post.json.person 与人物文案哈希；post.json.person_raw 保存解析原文。Windows 非法路径字符替换为下划线，保留设备名加下划线前缀；没有文字的人名使用 unknown_person，去重键仍为 null。普通文字、数字、中文和连字符不受 emoji 清洗影响。复合 emoji、肤色修饰和旗帜由 [emoji.replace_emoji](https://emoji-python.readthedocs.io/en/latest/api.html#emoji.replace_emoji) 处理。
+
+保存命令可以读取日期/人物/哈希以及旧的日期/哈希目录。采集复用旧记录时会升级人物层级及清洗后的身份键，整条记录的截图、媒体和元信息一起迁移。

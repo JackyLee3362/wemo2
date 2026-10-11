@@ -1,424 +1,66 @@
-# wemo2 架构草案
+# wemo2 架构
 
-版本：`0.1.0`。状态：完整目标契约草案，已有最小本地实现。
+## 两阶段流程
 
-当前实现范围：`JsonCollector` 读取 Observation 数组，`Deduplicator` 使用 Observation ID 和稳定源 ID 去重，`SQLiteStore` 原子保存采集记录、动态和修订，`Coordinator` 按记录串联处理。通过 CLI 导入并执行。尚未实现下文完整的分页、媒体、候选审核、检查点及远端同步契约；无稳定源 ID 时保留独立记录，合并仅处理顶层字段完整度。Windows/Android 真实采集器及 Memos 适配器尚未实现。
-
-wemo2 是朋友圈备份工具，分为自动采集、去重、持久化三个独立模块。本文先定义与语言、框架、采集技术和存储位置无关的数据契约；视觉识别、控件访问、数据库读取均作为可替换的采集适配器。
-
-首版技术选型：Python 3.12+，使用 uv 管理项目和依赖，Loguru 记录日志，Typer 提供 CLI。优先实现 CLI，Tkinter 界面留待后续实现，当前代码不依赖 Tcl/Tk。首版采集源为 Windows 微信，后续增加 Android 采集适配器；平台差异封装在 Collector 内，继续使用本文的 JSON 契约。
-
-最终持久化与展示目标为 Memos，通过 Memos 适配器保存动态与媒体并利用其界面展示。具体 API、认证和字段映射在接入时按部署版本确认。Memos 未必直接提供本文要求的事务、身份索引和检查点，因此本地状态库负责幂等、修订、待办和检查点，Memos 写入通过持久化待办重试并记录远端 ID。一次本地提交不等于 Memos 同步完成，任务结果需单独报告同步状态。当前已实现最小 SQLite 本地存储，尚未实现 Memos 适配器。
-
-## 1. 模块边界
-
-Windows 截图阶段已经实现，注册名 `windows_screenshot`，通过 `wemo2.screenshot.toml` 运行。
-截图与 JSON 元数据保存到 `data/screenshot`。此阶段不解析朋友圈，动态数量为 0；
-`BaseCollector.artifacts()` 与 `RunResult.artifacts` 交付实际保存的证据路径。
-
-界面采集器内部设计见 [wemo2.collectors 架构](src/wemo2/collectors/ARCHITECTURE.md)。
-采集包保留平台驱动接口；页面和主题使用统一 UiProfile，截图和图像定位采用 Airtest。
-内部路由器与控制器直接使用具体类，无状态校验使用函数；未实现的 OCR/动态解析接口暂不放入代码。
-控制器统一操作协议并交付结构化 ActionResult；动作状态和截图细节不进入应用数据契约。
-页面、主题、模板、窗口和截图配置由 `wemo2.collectors` 独立维护。
-应用层只传递 `collector_options` 字典与配置目录，通过注册的 `prepare_options` 委托
-实现方校验与解析；数据源平台也属于专属配置。Windows 已实现截图及导航，Android 尚未实现。
-
-应用启动由 `config.py` 合并配置：命令行显式设置优先于 TOML 配置文件，配置文件优先于
-`AppConfig` 中的代码默认值。默认查找当前目录的 `wemo2.toml`，可用 `--config` 指定文件。
-CLI 只提供帮助、版本、配置路径和日志路径四个选项；组件选择、输入路径和停止策略等
-业务配置只从文件及代码默认值读取，命令行只覆盖日志路径。
-配置统一控制三个组件的选择、JSON 输入、SQLite 路径、日志级别和日志文件，经过
-Pydantic 校验后交给组合入口；CLI 启动默认执行一次流程并退出，不再设置运行模式。
-
-CLI 使用 Rich 展示统计表格和简短错误提示；Loguru 默认写入 `logs/wemo2.log`，
-不在终端输出运行日志。日志为 UTF-8，10 MB 轮转并保留 7 天的轮转文件，
-失败详情记录在日志文件中。日志路径支持配置文件和 `--log-file` 覆盖。
-
-当前 Python 代码使用 `interfaces.py` 的 `BaseCollector`、`BaseDeduplicator`、`BaseStore`
-三个 ABC 抽象类。`Coordinator` 只依赖这些契约，通过构造函数注入具体实现；
-`composition.build_coordinator()` 是选择并组装实现的入口，协调器本身不做模拟。
-
-`registry.py` 是组件名称与实现类的唯一注册入口，按采集、去重、存储分为三个注册表。
-注册信息包含实现类、构造参数到配置字段的映射、可选默认搭配和展示提示。
-Pydantic 配置模型按注册表校验组件名称与所需参数，
-组装入口通过注册表创建实例。新增采用已有配置字段的实现只需导入和注册，
-无需增加枚举或组装分支。新采集器的专属字段在其自己的配置模型中声明，
-无需修改应用配置。除了唯一注册入口外，核心模块不导入界面采集模型或实现。
-
-流程演示提供 `PseudoCollector`（内置模型记录）、`PseudoDeduplicator`（Observation ID 幂等）、
-`PseudoStore`（内存保存、修订和失败回滚）。采集器默认产生两条动态与一次重复投递，
-同一个协调器可替换为 JSON 采集、稳定源 ID 去重或 SQLite 存储，也支持混合组合。
-模拟存储是单线程演示工具，不提供跨进程持久化和并发保证。
+采集器内完成本地去重归档；存储器消费已采集的文件夹。两个命令可分开运行，不依赖同一进程、内存对象或微信会话。
 
 ```mermaid
 flowchart LR
-    Runner[任务编排器] --> Collector[采集适配器]
-    Collector --> Observation[采集记录 Observation]
-    Observation --> Resolver[标准化与去重服务]
-    Resolver --> Store[存储适配器]
-    Collector --> Media[媒体获取器]
-    Media --> Store
-    Store --> Checkpoint[任务检查点]
-    Checkpoint --> Runner
+    collect["wemo2 collect"] --> collector["BaseCollector"]
+    collector --> archive["本地归档与人物文案去重"]
+    archive --> folders["账号 / YYYY-MM-DD / 人物 / 哈希
+post.json + 截图 + 媒体"]
+    folders --> reader["ArchiveReader 校验文件"]
+    reader --> store["BaseStore"]
+    save["wemo2 save --memos"] --> reader
+    store --> pseudo["PseudoStore，当前模拟 Memos"]
 ```
 
-| 模块 | 输入 | 输出 | 职责 |
-| --- | --- | --- | --- |
-| 任务编排器 | 采集任务、检查点 | 执行结果 | 调度、重试、串联处理、推进游标 |
-| 采集适配器 | 范围、游标、数量限制 | Observation 批次、下一游标 | 从具体数据源读取，不负责最终去重或存储 |
-| 标准化与去重服务 | Observation、已有索引 | 身份匹配、内容合并、保存结果 | 判断同一条动态、保留修订、执行幂等写入 |
-| 媒体获取器 | 临时媒体引用 | 字节流、下载状态 | 将图片、视频等交给存储层，不把大文件塞进 JSON |
-| 存储适配器 | 动态、采集记录、媒体、检查点 | 持久化回执 | 封装本地文件、数据库、对象存储或云端实现 |
+删除旧的 BaseDeduplicator、Deduplicator/PseudoDeduplicator 和 Coordinator；不再输出 Observation 给独立去重服务，也不再用 SQLite 保存同一采集流程。原 wemo2_collector 包已经合并到 wemo2.collectors。
 
-模块可运行在同一进程，也可通过 HTTP、消息队列或标准输入输出连接。本文的操作名是逻辑接口，不规定网络协议。
+## 组件与边界
 
-## 2. 通用数据约定
+| 模块 | 职责 |
+| --- | --- |
+| cli.py | Typer 的 collect/save 命令、显式参数及 Rich 展示 |
+| config.py | 共用资源目录和账号、配置优先级、路径解析及组件校验 |
+| registry.py | 唯一登记采集器和存储器名称、实现及构造参数 |
+| app.py | 分别构造并运行采集器或存储器，不构造另一阶段 |
+| interfaces.py | BaseCollector、BaseStore 两种抽象接口 |
+| collectors/ | Windows UI 操作、OCR、媒体保存、拼接及归档合并 |
+| records.py | post.json 的通用 Pydantic 契约与人物文案哈希 |
+| names.py | 人物 emoji 清洗与 Windows 单层目录名规范 |
+| archive_paths.py | 日期/人物/朋友圈布局及旧目录的安全升级 |
+| models.py | CollectResult、ArchivedPost、SaveResult 通用交付结构 |
+| archive_reader.py | 按账号读取归档并校验资源及媒体哈希 |
+| pseudo.py | 离线示例采集和内存保存实现 |
 
-Python 实现以 `src/wemo2/models.py` 中的 Pydantic 模型为数据定义，JSON 是它们的外部序列化形式。
-已定义 Observation、Source、Content、Author、Media、Comment、Reaction、Post、Decision 和 RunResult 等结构。
-时间字段使用带时区的 datetime，导入时校验必填项、字段状态、媒体结构及稳定源 ID 的关联约束。
-序列化使用 `exclude_unset=True` 保留字段缺失语义，旧数据库的 Observation 通过模型解析后比较，兼容时间字符串格式变化。
+窗口、模板、主题和路由只位于 collectors 内。应用层通过 registry 组装，不导入采集私有模型。存储器取得的是已经校验的 ArchivedPost，包括元信息及真实文件路径；不再次做人物文案去重，也不从窗口截图解析信息。
 
-当前 `JsonCollector(path)` 接收文件路径，文件中的数组代表一批 Observation，用于导入已有或模拟记录。
-抽象采集接口 `collect() -> Iterable[Observation]` 的输出不依赖文件格式；未来 Windows/Android 采集器可直接逐条产生模型对象。
+## 本地归档契约
 
-- JSON 字段使用 `snake_case`；所有消息携带 `schema_version`。
-- ID 均为字符串；内部 ID 使用 UUID 或同等唯一标识，不依赖某种数据库自增值。
-- 时间采用带时区的 RFC 3339 字符串；存储时统一 UTC。无法获取的字段为 `null`，不能伪造发布时间或用户 ID。
-- `account_scope` 表示一个备份账号的独立命名空间。不同账号的动态默认不跨域合并。
-- 用户、动态、评论的源 ID 只有在采集器明确声明稳定且作用域已知时，才作为强身份依据。
-- 字段缺失或 `null` 表示未观察到；空数组只有在字段标记为 `complete` 时才表示“确实为空”。
-- `extensions` 用于适配器专属信息；核心模块不得依赖它完成基本工作。
-- 所有例子均为虚构数据；访问凭证由实现侧配置，不能写入动态或任务 JSON。
+目录为 `resource_dir/account/YYYY-MM-DD/<去除 emoji 后的人物名>/<人物与完整文案的 SHA-256>/`。
 
-## 3. 核心数据结构
+每条至少留存 post.json 与 screenshot.png；已经成功下载的图片和视频放在 media 下，JSON 保存相对路径、大小和 SHA-256。未知日期使用 unknown_date；识别不完整使用 unidentified 标识，避免误去重。同账号同人物同完整文案复用目录，截图证据和媒体做增量合并，原文件不被覆盖。
 
-### 3.1 Observation：一次采集得到的事实
+识别裁剪边界 MomentDetails 属于采集私有模型；MomentRecord、ArchiveMedia、MomentEvidence 是可供保存阶段读取的共享元信息。未来跨进程无需传递 UI 类，只需读取 JSON 和同目录资源文件。
 
-Observation 是追加保存的采集记录。相同动态可以有多次 Observation；采集重试必须复用同一个 `observation_id`，真正的新观察使用新 ID。
+## 默认组合和配置
 
-```json
-{
-  "schema_version": "0.1.0",
-  "observation_id": "obs-001",
-  "account_scope": "account-local-001",
-  "collector_id": "wechat-ui-local",
-  "run_id": "run-001",
-  "observed_at": "2026-10-10T13:00:00Z",
-  "source": {
-    "platform": "wechat_moments",
-    "method": "ui",
-    "instance_id": "device-local-001",
-    "native_post_id": null,
-    "native_id_namespace": null,
-    "native_post_id_stable": false
-  },
-  "content": {
-    "author": {
-      "native_user_id": null,
-      "native_user_id_namespace": null,
-      "native_user_id_stable": false,
-      "display_name": "示例用户"
-    },
-    "published_at": null,
-    "published_time": {
-      "raw": "今天",
-      "precision": "day",
-      "earliest": "2026-10-09T16:00:00Z",
-      "latest_exclusive": "2026-10-10T16:00:00Z"
-    },
-    "text": "今天去看海。",
-    "location": null,
-    "link": null,
-    "media": [
-      {
-        "attachment_key": "attachment-001",
-        "kind": "image",
-        "position": 0,
-        "source_asset_id": null,
-        "source_ref": "collector://wechat-ui-local/media/attachment-001",
-        "rendition": "thumbnail",
-        "mime_type": "image/jpeg",
-        "sha256": null
-      }
-    ],
-    "comments": [],
-    "reactions": []
-  },
-  "field_status": {
-    "author": "partial",
-    "published_at": "unknown",
-    "text": "complete",
-    "media": "partial",
-    "comments": "unknown",
-    "reactions": "unknown"
-  },
-  "evidence": [
-    { "kind": "screenshot", "storage_ref": "blob://evidence/example-001" }
-  ],
-  "extensions": {}
-}
-```
+collect 默认使用 windows_screenshot；配置 collector=pseudo 可离线生成固定示例归档。两者都直接完成本地交付。
 
-`method` 建议值：`vision`、`ui`、`database`、`import`。`field_status` 取 `unknown`、`partial`、`complete`，状态含义由采集器保证；视觉误识别等问题可在 `extensions` 记录置信度和位置。
+save 默认使用 pseudo；--memos 优先于配置的 store，选择注册名称 memos。当前 memos 映射 PseudoStore，并通过 notice 明确提示尚未上传。Memos 0.31 API 的实现留待下一阶段，不预先加入网络依赖、令牌、接口路径或请求逻辑。
 
-`published_at` 只存已知的精确时间；相对时间保留原文和可推断区间。媒体的 `source_ref` 是采集器可解析的临时引用，可能过期，不能当永久备份地址。
+配置优先级保持 CLI 显式参数 > 文件 > 默认值。resource_dir 和 account 在顶层共用；旧采集器选项中的同名字段可以提升迁移，但冲突会拒绝。截图专属路径只由采集配置解析。
 
-评论建议结构：`{comment_id, native_comment_id, author, text, published_at, reply_to}`；反应建议结构：`{reaction_id, type, actor}`。内部子项 ID 由去重服务分配。没有稳定源 ID 时，不凭昵称和相同文本自动合并评论。
+## 成功、失败与后续实现
 
-### 3.2 Post：合并后的动态
+collect 失败时保留原始截图、已归档 JSON、已下载媒体和动作证据。save 遇到缺失、越界、损坏或不匹配的归档停止，不向存储器提交当前坏记录。存储异常不重发，命令退出非零，终端只展示简短错误和日志路径；已完成的其他记录不因此删除。
 
-```json
-{
-  "schema_version": "0.1.0",
-  "account_scope": "account-local-001",
-  "post_id": "post-001",
-  "revision": 1,
-  "content": {
-    "author": { "author_id": "author-001", "display_name": "示例用户" },
-    "published_at": null,
-    "published_time": {
-      "raw": "今天",
-      "precision": "day",
-      "earliest": "2026-10-09T16:00:00Z",
-      "latest_exclusive": "2026-10-10T16:00:00Z"
-    },
-    "text": "今天去看海。",
-    "location": null,
-    "link": null,
-    "media": [
-      {
-        "attachment_id": "attachment-001",
-        "position": 0,
-        "kind": "image",
-        "rendition": "thumbnail",
-        "asset_id": null,
-        "state": "pending"
-      }
-    ],
-    "comments": [],
-    "reactions": []
-  },
-  "identity_keys": [],
-  "fingerprints": {
-    "algorithm": "post-content-v1",
-    "value": null
-  },
-  "field_status": { "text": "complete", "media": "partial" },
-  "provenance": { "text": "obs-001", "media": "obs-001" },
-  "observation_ids": ["obs-001"],
-  "first_seen_at": "2026-10-10T13:00:00Z",
-  "last_seen_at": "2026-10-10T13:00:00Z",
-  "availability": "unknown"
-}
-```
+本次模拟保存只验证流程与数据交付，不产生远端幂等回执或持久化保障。未来接入 Memos 时，新增 BaseStore 实现并在 registry 登记；存储端仍需处理自身的上传回执、网络中断与重复运行，但不恢复独立的朋友圈去重器。
 
-`author_id` 是内部身份，昵称不构成唯一身份。稳定源用户 ID 可映射到内部身份；无法确定时保留独立身份和待确认候选。
+采集内部的 UiController、UiProfile、Airtest 匹配、Win32 保存控件和图片切换策略保持现有职责，详见 collectors/ARCHITECTURE.md。
 
-`revision` 在合并内容或附件状态发生变化时递增；单纯更新最后观察时间不必创建内容修订。保留旧修订和字段来源，冲突不能通过覆盖原始 Observation 消失。`availability` 可取 `unknown`、`visible`、`unavailable`；采集不到不能直接解释为已删除。
+人物清洗由 names.normalize_person 统一执行，OCR 输出、MomentRecord 和 moment_key 使用相同规则。person_raw 保留原始人名，不参与哈希；朋友圈正文不移除 emoji。目录名通过 person_directory 避开路径分隔符、控制字符和 Windows 保留设备名。只含 emoji 或未识别人名的归档位于 unknown_person 下，仍不生成稳定身份键。
 
-### 3.3 Asset：实际备份的媒体
-
-```json
-{
-  "schema_version": "0.1.0",
-  "account_scope": "account-local-001",
-  "asset_id": "asset-001",
-  "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "byte_size": 123456,
-  "mime_type": "image/jpeg",
-  "storage_ref": "blob://assets/asset-001",
-  "stored_at": "2026-10-10T13:01:00Z"
-}
-```
-
-上例哈希为占位示意，真实哈希由已获取的字节计算。附件状态取 `pending`、`stored`、`failed`、`unavailable`。原图、缩略图和视频封面是不同版本，不能相互冒充；同一文件可被多个附件引用。
-
-## 4. 采集接口 Collector
-
-```text
-describe() -> CollectorCapabilities
-collect(CollectRequest) -> CollectBatch
-open_media(MediaRequest) -> MediaStream
-```
-
-`describe()` 返回 `collector_id`、支持的数据字段、`can_resume`、`can_fetch_media`、`stable_post_ids`、`ordering`。数据源不具备的能力应显式声明；接口不保证某个微信版本能使用某种采集方法。
-
-请求：
-
-```json
-{
-  "schema_version": "0.1.0",
-  "run_id": "run-001",
-  "account_scope": "account-local-001",
-  "range": { "since": null, "until": null, "author_ids": [] },
-  "cursor": null,
-  "limit": 50,
-  "include": { "media": true, "comments": true, "reactions": true }
-}
-```
-
-响应外壳，`observations` 中的元素遵循 3.1：
-
-```json
-{
-  "schema_version": "0.1.0",
-  "batch_id": "batch-001",
-  "observations": [],
-  "next_cursor": "opaque-collector-cursor",
-  "has_more": true,
-  "coverage": "partial",
-  "warnings": [],
-  "errors": []
-}
-```
-
-- 游标是不透明字符串，只由同一个采集器解析，并绑定账号、查询范围及游标版本。
-- `has_more=false` 仅表示本次遍历结束；`coverage` 取 `complete`、`partial`、`unknown`，描述请求范围的实际覆盖情况。
-- 无法可靠续采的视觉/UI 实现可重新扫描近期范围，由后续去重消除重复；游标失效返回明确错误。
-- `open_media` 输入包含 `account_scope`、`observation_id`、`attachment_key`、`source_ref`；输出字节流及 MIME 类型等元信息。跨进程可使用二进制 HTTP 响应或临时下载地址。
-
-## 5. 标准化与去重接口 Resolver
-
-```text
-normalize(observation) -> NormalizedObservation
-resolve(normalized_observation, store) -> MatchDecision
-ingest(observation, store) -> IngestResult
-```
-
-`normalize`、`resolve` 不写入数据。`ingest` 是编排器调用的主接口，完成标准化、匹配、合并和原子保存；实际写入由存储适配器负责。
-
-```json
-{
-  "schema_version": "0.1.0",
-  "observation_id": "obs-001",
-  "post_id": "post-001",
-  "action": "created",
-  "match": { "rule": "new", "confidence": 1.0, "candidate_post_ids": [] },
-  "revision": 1,
-  "pending_media": ["attachment-001"]
-}
-```
-
-`action`：`created`、`merged`、`unchanged`、`needs_review`。`needs_review` 也要持久化：保存独立的临时 Post 和匹配候选，等待后续证据或人工确认；不能丢弃记录或推进游标前留在内存中。
-
-### 5.1 匹配规则，按优先级执行
-
-1. **请求幂等**：相同 `(account_scope, observation_id)` 返回已有回执。相同 ID 携带不同负载返回 `IDEMPOTENCY_CONFLICT`。
-2. **强身份匹配**：使用 `(account_scope, platform, native_id_namespace, native_post_id)`。只有稳定源 ID 可参与；相同动态内容变化时产生修订，不创建新动态。
-3. **内容候选匹配**：无源 ID 时，使用作者身份、发布时间或区间、正文、媒体及其顺序查找候选。内容完全相同仍可能是同一作者重复发布，因此内容哈希不能单独作为唯一约束。v0.1 对无强身份依据的匹配默认进入待确认，后续可配置保守的自动合并策略。
-4. **模糊候选匹配**：OCR 差异、时间模糊、缺失媒体仅用于推荐候选，不自动合并。置信度描述规则判断，不能当作校准后的概率。
-
-标准化保留原文，并生成匹配用文本：统一 Unicode NFC 和换行，去除首尾空白，保留表情、标点和正文内部空白。指纹采用 SHA-256，对明确字段投影执行固定键序 JSON 序列化；记录算法版本，排除采集时间、下载地址、昵称变化、评论和点赞。媒体内容哈希存在时优先使用，临时 URL 不能充当文件身份。
-
-### 5.2 合并规则
-
-- `unknown` 或 `partial` 的新值不能清空已有完整字段；完整数据可以补全缺失信息。
-- 强身份相同且完整字段发生变化时，保留新旧修订及来源；来源矛盾时记录冲突，v0.1 不默认认定某种采集技术总是更可靠。
-- 评论、点赞不参与动态身份判断。新增可合并；删除只有在明确完整快照和可比较子项身份时才能推断，否则保留旧项及观察记录。
-- 文件按实际字节哈希去重，不按文件名或下载 URL 去重；无强身份的动态宁可保留待确认副本。
-
-## 6. 持久化接口 Store
-
-```text
-get_post(account_scope, post_id) -> Post | null
-find_candidates(account_scope, identity_keys, fingerprints, hints) -> Post[]
-get_ingest_receipt(account_scope, observation_id) -> IngestResult | null
-commit_ingest(observation, post_change, identity_bindings,
-              review_candidates, receipt, expected_revision) -> IngestResult
-put_asset(account_scope, bytes, metadata) -> Asset
-link_asset(account_scope, post_id, attachment_id, asset_id, expected_revision) -> Post
-get_checkpoint(account_scope, collector_id, query_key) -> Checkpoint | null
-save_checkpoint(checkpoint, expected_checkpoint_version) -> Checkpoint
-```
-
-`commit_ingest` 必须将 Observation、Post/修订、身份索引、待确认候选、幂等回执及媒体待办作为一个原子提交。数据库可用事务；文件实现可用单写者、日志与原子替换达到同样的可恢复语义。`expected_revision` 提供乐观锁；冲突后重新读取并执行匹配/合并，不能覆盖另一写者的结果。
-
-稳定身份键和 Observation ID 都需唯一约束。内容指纹是非唯一索引。首次创建时，同一强身份被并发插入也必须检测冲突并重试；v0.1 默认每个账号一个写入任务。
-
-`put_asset` 只有字节持久化且校验通过后才返回成功；按 `(account_scope, sha256)` 幂等。`link_asset` 更新附件引用及状态，保留修订。媒体上传与元数据提交无法组成一个事务时，先保存文件再关联；崩溃产生的孤立文件通过延迟清理回收，待办重试可复用已存在的文件。
-
-检查点示例：
-
-```json
-{
-  "schema_version": "0.1.0",
-  "account_scope": "account-local-001",
-  "collector_id": "wechat-ui-local",
-  "query_key": "recent-all-v1",
-  "cursor": "opaque-collector-cursor",
-  "last_committed_batch_id": "batch-001",
-  "checkpoint_version": 1,
-  "updated_at": "2026-10-10T13:02:00Z"
-}
-```
-
-`query_key` 是账号、范围、采集选项及配置版本的稳定摘要。检查点只在整个批次的所有 Observation 已成功提交后推进。媒体可尚未完成，但其待办与临时引用必须已持久化；元数据采集完成和媒体备份完成应分别报告。
-
-## 7. 一次自动采集流程
-
-当前最小实现支持重复停止策略：去重器返回 `Decision.is_duplicate`，协调器在当前记录
-成功提交后累计重复次数，并根据 `StopPolicy` 的 `first`、`after_n`、`never` 决定是否结束。
-`after_n` 使用本次运行累计计数，不要求连续重复；默认 `never`。已有动态内容变化仍属于
-身份重复，但必须先保存修订。`RunResult.duplicates` 和 `stop_reason` 描述计数及结束原因。
-协调器结束时调用采集器的 `stop()`，并关闭生成器；真实采集器需要逐条读取或响应停止信号。
-策略停止意味着主动结束本次遍历，不能据此宣称完整覆盖请求范围。
-
-```text
-读取能力、配置及检查点
-循环：
-    batch = collector.collect(request_with_saved_cursor)
-    对 batch 中每条 observation：
-        result = resolver.ingest(observation, store)
-        确认回执和媒体待办已经持久化
-    确认没有未处理的采集错误或未保存的记录
-    store.save_checkpoint(batch.next_cursor)
-    若 batch.has_more == false：结束本次遍历
-媒体工作器读取持久化待办：
-    stream = collector.open_media(pending_media)
-    asset = store.put_asset(stream)
-    store.link_asset(post, attachment, asset)
-    更新待办状态，失败则记录原因并重试
-```
-
-采用至少一次投递：崩溃后允许重放整个批次，以 Observation 幂等和身份匹配控制重复。采集器应尽可能在重放时复用 Observation ID；做不到时强身份仍可去重，无强身份则进入候选处理。单条失败时不跳过该批次，重试时已提交记录返回原回执。
-
-## 8. 错误、恢复与备份完整性
-
-统一错误结构：
-
-```json
-{
-  "code": "SOURCE_UNAVAILABLE",
-  "message": "当前采集源不可访问",
-  "retryable": true,
-  "retry_after_ms": 5000,
-  "context": { "run_id": "run-001", "observation_id": null }
-}
-```
-
-建议错误码：`AUTH_REQUIRED`、`SOURCE_UNAVAILABLE`、`CURSOR_EXPIRED`、`PARSE_FAILED`、`MEDIA_UNAVAILABLE`、`STORAGE_FAILED`、`REVISION_CONFLICT`、`IDEMPOTENCY_CONFLICT`、`SCHEMA_UNSUPPORTED`。
-
-可重试错误使用有上限的指数退避；认证缺失等待用户处理，游标过期从重叠范围重采，媒体永久不可获取则保留 `unavailable` 状态及原因。任务结果应记录动态数量、待确认数量、媒体成功/失败/待处理数量、覆盖范围和检查点，不能把缺少媒体的备份报告为完整。
-
-原始记录、证据和媒体可能包含私人信息。适配器只读取用户授权的账号数据，日志避免正文及凭证；本地权限、云端认证、加密和导出策略由具体部署配置。保留原始记录和修订会增加容量，应提供可配置的保留策略，并保证删除文件前检查引用。
-
-## 9. 最小可运行实现建议
-
-这是一条建议落地路线，接口不绑定以下技术：
-
-1. 先实现 `JsonImportCollector`，读取符合 3.1 的 JSON 文件，验证模块之间能互换数据。
-2. 使用 SQLite 保存 Observation、Post、修订、身份索引、回执、媒体待办和检查点；媒体保存到本地 `assets/`，按哈希组织。
-3. 实现强身份去重、Observation 幂等、文件哈希去重和待确认候选；先不实现自动模糊合并。
-4. 优先通过 CLI 手动执行，后续增加周期执行、Windows 采集器和 Memos 适配器，再扩展 Android。Tkinter 界面作为后续交互层接入既有配置和协调器。
-
-实现阶段的验收场景：同一 Observation 重放不增量；同一源动态内容更新保留修订；同文不同源动态不误合并；部分采集不清空完整字段；进程在保存和推进游标之间中断可恢复；相同媒体重复下载只保存一份；媒体失败保留可重试待办；并发强身份写入只产生一条正式动态。
-
-后续需要细化：各采集器的实际可用能力、身份确认机制、JSON Schema、评论/点赞子项契约、冲突处理界面，以及存储适配器的一致性测试。本草案不假定已具备访问微信数据库或完整朋友圈数据的能力。
-
-当前 Windows 视觉采集支持本地朋友圈资源留痕：配置 resource_dir/account，按
-`账号/粗略日期/朋友圈` 保存 JSON、拼接截图和已下载媒体。该路径仅由采集包维护。
-本地归档依用户指定的“人物 + 完整文案”规则合并，媒体按文件字节 SHA-256 合并；
-日期未知或文字不完整时保留不确定性，不伪造稳定微信身份。
-具体 JSON、目录布局与限制见 [朋友圈资源协议](doc/moment-resources.md)。
+archive_paths 同时枚举新旧两种布局，旧归档按清洗后的身份键匹配，并在再次采集时升级为日期/人物/哈希目录；先检查路径处于配置账号目录中，再移动整个朋友圈文件夹、更新元信息身份键，截图和媒体相对引用保留。目标存在或已有多个相同身份的目录时停止，不覆盖已有资源。

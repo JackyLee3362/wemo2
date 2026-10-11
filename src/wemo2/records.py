@@ -6,7 +6,9 @@ import unicodedata
 from datetime import date
 from typing import Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+from wemo2.names import normalize_person
 
 
 class ArchiveMedia(BaseModel):
@@ -41,6 +43,7 @@ class MomentRecord(BaseModel):
     account: str  # 备份账号命名空间，隔离不同账号的去重与资源。
     dedup_key: str | None  # 不完整识别不生成去重键，防止未知数据错误合并。
     person: str | None
+    person_raw: str | None = None  # OCR 原始人名留痕；不参与目录或身份去重。
     text: str | None
     text_status: Literal["unknown", "partial", "complete"]
     approximate_date: date | None  # 推断到日；推断不了就为空。
@@ -55,10 +58,19 @@ class MomentRecord(BaseModel):
     evidence: list[MomentEvidence] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def normalize_name(self):
+        """统一元信息中的人名，读取旧 JSON 时保留原始 emoji 名称作为证据。"""
+        if self.person_raw is None:
+            self.person_raw = self.person
+        self.person = normalize_person(self.person)
+        return self
+
 
 def moment_key(person: str | None, text: str | None, text_status: str) -> str | None:
     """按人物和完整文案生成身份键；未知和截断正文不参与本地归档合并。"""
-    if not person or not person.strip() or text is None or text_status != "complete":
+    person = normalize_person(person)
+    if person is None or text is None or text_status != "complete":
         return None
     person = " ".join(unicodedata.normalize("NFC", person).split())
     text = " ".join(unicodedata.normalize("NFC", text).split())

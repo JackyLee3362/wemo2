@@ -3,13 +3,12 @@ collector = "windows_screenshot"
 log_file = "logs/wemo2.log"
 
 resource_dir = "data/moments"
-account = "default"
+account = "default" # 本次备份账号，与朋友圈发布者不同。
 
 [collector_options]
 platform = "windows"
 window_title = "微信"
 screenshot_dir = "data/screenshot"
-account = "default" # 改为本次备份账号；它与朋友圈发布者不同。
 timezone = "Asia/Shanghai"
 theme = "dark"
 

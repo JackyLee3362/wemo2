@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from wemo2.collectors.airtest_logging import AirtestLogHandler
 from wemo2.collectors.dates import approximate_day
 from wemo2.collectors.models import MomentDetails, Rect
+from wemo2.names import normalize_person
 
 
 class TextLine(BaseModel):
@@ -165,6 +166,8 @@ class TextRecognizer:
             right = line.bounds.x + line.bounds.width
         if words:
             details.person = "".join(words)
+        details.person_raw = details.person
+        details.person = normalize_person(details.person)
         bottom = image.height if footer is None else footer.bounds.y
         for tile in tiles:
             if tile.y > name.bounds.y + name.bounds.height:

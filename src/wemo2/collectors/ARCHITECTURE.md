@@ -89,7 +89,7 @@ Pydantic 检查名称与键一致、保留名称、路由端点及目标验证�
 
 Airtest 的多尺度最佳匹配接口不能枚举全部候选，不能单独证明目标唯一。
 因此目前使用多目标模板匹配加有限 DPI 适配，不承诺任意尺寸或任意皮肤都能识别。
-Airtest 图像与设备模块延迟加载，日志统一转入 Loguru 文件 sink。
+Airtest 图像与设备模块延迟加载，日志统一转入 Loguru，默认控制台输出，文件输出可选。
 
 ## 4. 标准动作协议
 
@@ -122,7 +122,8 @@ Windows swipe 是鼠标拖动；FeedCapture 使用独立的 scroll 动作调用 
 
 ```toml
 collector = "windows_screenshot"
-log_file = "logs/wemo2.log"
+# 默认输出控制台，需要同时写文件时启用：
+# log_file = "logs/wemo2.log"
 
 [collector_options]
 platform = "windows"

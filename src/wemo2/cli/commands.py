@@ -38,7 +38,9 @@ def entry(
     config: Path | None = typer.Option(
         None, "--config", help="TOML 文件，默认尝试 wemo2.toml"
     ),
-    log_file: Path | None = typer.Option(None, "--log-file", help="日志文件路径"),
+    log_file: Path | None = typer.Option(
+        None, "--log-file", help="同时写入日志文件，默认只输出控制台"
+    ),
     version: bool = typer.Option(
         False, "--version", callback=show_version, is_eager=True, help="显示版本并退出"
     ),
@@ -64,15 +66,13 @@ def _execute(
     overrides = {}
     if log_file is not None:
         overrides["log_file"] = log_file
-    startup_sink, startup_log = initialize_startup_logging()
+    startup_sink = initialize_startup_logging()
     try:
         try:
             settings = load_config(overrides, config)
         except (OSError, ValueError, TypeError) as error:
             logger.exception("配置加载失败，停止执行命令：{}", error)
-            raise typer.BadParameter(
-                f"配置无效：{error}；详细日志：{startup_log}"
-            ) from error
+            raise typer.BadParameter(f"配置无效：{error}") from error
         # 执行层只在实际命令启动时导入，帮助和版本不会运行采集或保存。
         from wemo2.cli.runtime import launch
 
@@ -81,7 +81,6 @@ def _execute(
             settings,
             use_memos,
             startup_sink=startup_sink,
-            startup_log=startup_log,
         )
     finally:
         logger.remove()
@@ -91,7 +90,9 @@ def _execute(
 def collect(
     ctx: typer.Context,
     config: Path | None = typer.Option(None, "--config", help="TOML 配置文件"),
-    log_file: Path | None = typer.Option(None, "--log-file", help="日志文件路径"),
+    log_file: Path | None = typer.Option(
+        None, "--log-file", help="同时写入日志文件，默认只输出控制台"
+    ),
 ) -> None:
     """采集朋友圈并按账号、日期、人物文案哈希去重归档。"""
     _execute(ctx, "collect", config, log_file)
@@ -104,7 +105,9 @@ def save(
         False, "--memos", help="Memos 目标，当前用 pseudo 演示，尚未上传"
     ),
     config: Path | None = typer.Option(None, "--config", help="TOML 配置文件"),
-    log_file: Path | None = typer.Option(None, "--log-file", help="日志文件路径"),
+    log_file: Path | None = typer.Option(
+        None, "--log-file", help="同时写入日志文件，默认只输出控制台"
+    ),
 ) -> None:
     """读取已采集的朋友圈文件夹并交给存储器，不启动微信。"""
     _execute(ctx, "save", config, log_file, memos)

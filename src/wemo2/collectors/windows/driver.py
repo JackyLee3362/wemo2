@@ -36,8 +36,12 @@ class WindowsDriver(BaseDriver):
         self.session_process_id: int | None = None
 
     def attach(self) -> Surface:
+        """连接配置选定的微信实例，记录窗口选择结果以便排查多开情况。"""
         if sys.platform != "win32":
             raise RuntimeError("Windows 截图仅支持 Windows 主机")
+        logger.info(
+            "[窗口连接] 开始，标题={}，指定进程={}", self.window_title, self.process_id
+        )
         # Windows 专属模块延迟加载，help/version 不连接窗口。
         import psutil
         from pywinauto import findwindows
@@ -86,6 +90,7 @@ class WindowsDriver(BaseDriver):
                 continue
             if process_name in ("wechat.exe", "weixin.exe"):
                 matches.append(window)
+        logger.info("[窗口连接] 找到 {} 个符合条件的可见微信窗口", len(matches))
         if not matches:
             raise RuntimeError("未找到微信窗口，请打开微信窗口并检查 window_title 配置")
         if len(matches) != 1:
@@ -94,7 +99,15 @@ class WindowsDriver(BaseDriver):
             )
         self.device = create_device(handle=matches[0].handle, foreground=False)
         self.session_process_id = matches[0].process_id
-        return self.current_surface()
+        surface = self.current_surface()
+        logger.info(
+            "[窗口连接] 已连接，进程={}，窗口={}，客户区={}×{}",
+            self.session_process_id,
+            surface.surface_id,
+            surface.bounds.width,
+            surface.bounds.height,
+        )
+        return surface
 
     def current_surface(self) -> Surface:
         if self.device is None or self.user32 is None:
@@ -333,6 +346,10 @@ class WindowsDriver(BaseDriver):
         directory.mkdir(parents=True, exist_ok=True)
         prefix = f"asset_{uuid4()}"
         destination = (directory / prefix).resolve()
+        logger.info(
+            "[另存为] 已确认 Windows 控件，文件名输入框 ID=1001，保存按钮 ID=1，目标={}",
+            destination,
+        )
         # 标准对话框按所选文件类型补扩展名；唯一名称避免覆盖已有文件。
         filename_edits[0].set_edit_text(str(destination))
         process = wintypes.DWORD()
@@ -344,6 +361,7 @@ class WindowsDriver(BaseDriver):
         if not save_buttons[0].is_enabled():
             raise RuntimeError("另存为保存按钮尚不可用，未提交")
         # 使用控件消息提交，不依赖系统配色、按钮坐标或当前键盘焦点。
+        logger.info("[另存为] 通过 Windows 保存按钮提交一次，等待文件写入")
         save_buttons[0].click()
         last_size = None
         for _ in range(150):
@@ -365,6 +383,11 @@ class WindowsDriver(BaseDriver):
                     old = self.device
                     self.device = create_device(handle=foreground, foreground=False)
                     old.screen.close()
+                    logger.info(
+                        "[另存为] 文件写入稳定，大小={} 字节，路径={}",
+                        size,
+                        files[0].resolve(),
+                    )
                     return files[0].resolve()
                 last_size = size
             time.sleep(0.2)

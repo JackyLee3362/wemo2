@@ -121,6 +121,12 @@ class FeedCapture:
             nickname_score=None if nickname is None else nickname.score,
         )
         self.result.segments.append(segment)
+        logger.info(
+            "[朋友圈截图] 已保存片段，顶部缺失={}，底部缺失={}，路径={}",
+            segment.partial_start,
+            segment.partial_end,
+            path,
+        )
         self.segment_offset += height
         self.paths.append(path)
         remainder = self.pending.crop(
@@ -170,12 +176,24 @@ class FeedCapture:
         static_region = self.controller.profile.feed_static_bounds(
             region, first.surface.scale
         )
+        logger.info(
+            "[滚动采集] 开始，最多 {} 屏，每次滚轮 {} 步，证据目录={}",
+            self.config.max_screens,
+            self.config.wheel_steps,
+            self.directory,
+        )
         try:
             for index in range(self.config.max_screens):
                 if frame.surface != first.surface:
                     raise RuntimeError("滚动采集中窗口发生变化，停止拼接")
                 anchors = self.controller.locator.locate_all(
                     frame, "moments_anchor", region
+                )
+                logger.info(
+                    "[滚动采集] 第 {}/{} 屏，识别到 {} 个朋友圈锚点",
+                    index + 1,
+                    self.config.max_screens,
+                    len(anchors),
                 )
                 self.result.frames.append(frame)
                 image = self._image(frame, region)
@@ -186,8 +204,12 @@ class FeedCapture:
                     previous.close()
                 previous = image
                 if shift is None:
+                    logger.warning(
+                        "[拼接] 无法确认与上一屏的重叠，停止继续滚动并保留证据"
+                    )
                     self.result.stop_reason = "overlap_unverified"
                     break
+                logger.info("[拼接] 第 {} 屏新增 {} 像素", index + 1, shift)
                 self.stream_height += shift
                 self._append(frame, image, region, anchors, shift)
                 if (
@@ -248,9 +270,10 @@ class FeedCapture:
             path.write_text(self.result.model_dump_json(indent=2), encoding="utf-8")
             self.paths.append(path)
             logger.info(
-                "朋友圈截图采集停止：{}，{} 帧，{} 段",
+                "[滚动采集] 停止：{}，{} 帧，{} 段，清单={}",
                 self.result.stop_reason,
                 len(self.result.frames),
                 len(self.result.segments),
+                path,
             )
         return self.result

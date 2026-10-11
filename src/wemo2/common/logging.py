@@ -1,9 +1,19 @@
-"""文件日志初始化；配置尚未加载时也能记录启动错误。"""
+"""默认控制台日志；按需同时写文件，配置加载前也能记录启动错误。"""
 
+import sys
 from pathlib import Path
-from tempfile import gettempdir
 
 from loguru import logger
+
+
+def add_console_sink(level: str = "INFO") -> int:
+    """输出到当前 stderr，与 Rich 的结果输出分开，保留异常堆栈。"""
+    return logger.add(
+        sys.stderr,
+        level=level,
+        diagnose=False,
+        backtrace=False,
+    )
 
 
 def add_file_sink(path: Path, level: str = "INFO") -> int:
@@ -20,14 +30,7 @@ def add_file_sink(path: Path, level: str = "INFO") -> int:
     )
 
 
-def initialize_startup_logging() -> tuple[int, Path]:
-    """启动错误默认写入 logs/wemo2.log，目录不可写时使用系统临时目录。"""
+def initialize_startup_logging() -> int:
+    """配置尚未加载时先建立控制台错误日志，不创建文件或输出目录。"""
     logger.remove()
-    path = (Path.cwd() / "logs/wemo2.log").resolve()
-    try:
-        sink = add_file_sink(path, "ERROR")
-    except (OSError, ValueError) as error:
-        path = Path(gettempdir()) / "wemo2/startup.log"
-        sink = add_file_sink(path, "ERROR")
-        logger.exception("默认启动日志无法初始化，改写 {}：{}", path, error)
-    return sink, path
+    return add_console_sink("ERROR")

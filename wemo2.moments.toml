@@ -1,6 +1,7 @@
 # 打开发现菜单，再点击朋友圈一行并验证绿色选中样式；已选中则跳过点击。
 collector = "windows_screenshot"
-log_file = "logs/wemo2.log"
+# 默认日志输出控制台；需要同时写文件时取消下一行注释。
+# log_file = "logs/wemo2.log"
 
 resource_dir = "data/moments"
 account = "default" # 本次备份账号，与朋友圈发布者不同。

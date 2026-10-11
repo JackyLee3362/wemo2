@@ -18,7 +18,7 @@ src/wemo2/
 │   └── services.py             # run_collect / run_save 应用流程
 ├── cli/
 │   ├── commands.py             # Typer 声明及命令参数
-│   ├── runtime.py              # 执行、文件日志和失败退出
+│   ├── runtime.py              # 执行、控制台/可选文件日志和失败退出
 │   └── console.py              # Rich 结果展示
 ├── collectors/
 │   ├── pseudo.py               # 离线示例采集
@@ -36,7 +36,7 @@ src/wemo2/
     ├── paths.py                # 相对路径解析、目录范围检查
     ├── names.py                # 人物 emoji 清洗及原始名称一致性
     ├── windows_names.py        # 严格校验或清洗 Windows 单层目录名
-    └── logging.py              # 启动日志与 Loguru 文件 sink
+    └── logging.py              # 控制台启动日志及可选 Loguru 文件 sink
 ```
 
 api 表示 Python 组件接口和数据契约，没有新增 HTTP 服务。core/services.py 不依赖 Typer 或 Rich，可以被其他入口调用。cli 负责参数和终端展示；只有 core/registry.py 绑定具体采集器与存储器。

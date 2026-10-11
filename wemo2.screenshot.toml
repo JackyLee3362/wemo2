@@ -1,6 +1,7 @@
 # 截取当前微信窗口，只保存图片，不执行导航、OCR 或朋友圈内容识别。
 collector = "windows_screenshot"
-log_file = "logs/wemo2.log"
+# 默认日志输出控制台；需要同时写文件时取消下一行注释。
+# log_file = "logs/wemo2.log"
 log_level = "INFO"
 
 resource_dir = "data/moments"

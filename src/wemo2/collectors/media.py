@@ -108,6 +108,12 @@ class MediaCapture:
         keep_viewer: bool = False,
     ) -> SavedMedia:
         self.last_saved = None
+        logger.info(
+            "[媒体保存] 开始，流位置={}，保留查看器={}，保存目录={}",
+            stream_y,
+            keep_viewer,
+            self.directory / "media",
+        )
         session = self.viewer
         if session is None:
             fresh = self.controller.capture()
@@ -120,6 +126,7 @@ class MediaCapture:
             with old.crop(box).convert("RGB") as first:
                 key = f"{stream_y}:{hashlib.sha256(first.tobytes()).hexdigest()}"
         if session is None and key in self.saved:
+            logger.info("[媒体保存] 复用已验证的同位置文件：{}", self.saved[key].path)
             return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
         for preview in self.previews:
             if session is not None:
@@ -137,6 +144,7 @@ class MediaCapture:
             if self.controller.locator.same_preview(
                 preview.source, source, preview.bounds, bounds
             ):
+                logger.info("[媒体保存] 复用已验证的重叠文件：{}", preview.file.path)
                 return preview.file
         saved = None
         preview = None
@@ -154,6 +162,13 @@ class MediaCapture:
             )
             self.paths.append(path)
             self.last_saved = saved
+            logger.info(
+                "[媒体保存] 文件校验通过，类型={}，大小={} 字节，SHA-256={}，路径={}",
+                saved.kind,
+                saved.size,
+                saved.sha256,
+                saved.path,
+            )
             preview = SavedPreview(
                 source=source,
                 bounds=bounds,
@@ -189,6 +204,7 @@ class MediaCapture:
             for item in self.previews[preview_start:]:
                 item.workflow_complete = True
             self.viewer = None
+        logger.info("[媒体保存] 保存和查看器状态均已验证：{}", saved.path)
         return saved
 
     def process(
@@ -241,11 +257,20 @@ class MediaCapture:
                                 frame.surface.scale,
                                 search_height=image.height if index == 0 else None,
                             )
+                            logger.info(
+                                "[人物识别] 结果={}",
+                                "未识别"
+                                if card.nickname is None
+                                else card.nickname.text,
+                            )
                         if self.config.save_media:
                             tiles = media_tiles(image, frame.surface.scale)
                             card.media_candidates = len(tiles)
                             card.media_detection = (
                                 "candidates_found" if tiles else "none_detected"
+                            )
+                            logger.info(
+                                "[媒体定位] 当前卡片识别到 {} 个媒体候选", len(tiles)
                             )
                             targets = []
                             for tile in tiles:
@@ -279,4 +304,11 @@ class MediaCapture:
                             card.model_dump_json(indent=2), encoding="utf-8"
                         )
                         self.paths.append(metadata)
+                        logger.info(
+                            "[卡片留痕] 状态={}，已保存媒体={}，截图={}，元信息={}",
+                            card.status,
+                            len(card.media),
+                            path,
+                            metadata,
+                        )
                 top = bottom

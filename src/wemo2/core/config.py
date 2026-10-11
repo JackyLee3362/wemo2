@@ -21,7 +21,7 @@ class AppConfig(BaseModel):
     resource_dir: Path = Path("data/moments")
     account: str = "default"
     config_directory: Path = Field(default_factory=Path.cwd)
-    log_file: Path = Path("logs/wemo2.log")
+    log_file: Path | None = None  # 默认只输出控制台，显式指定时同时写文件。
     log_level: Literal[
         "TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"
     ] = "INFO"

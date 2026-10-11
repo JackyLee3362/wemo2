@@ -34,7 +34,8 @@ collector = "windows_screenshot"
 store = "pseudo"
 resource_dir = "data/moments"
 account = "default"
-log_file = "logs/wemo2.log"
+# 默认只输出控制台；需要同时写文件时启用：
+# log_file = "logs/wemo2.log"
 log_level = "INFO"
 
 [collector_options]
@@ -62,6 +63,12 @@ media_load_timeout_seconds = 30
 
 `--config`、`--log-file` 可放在子命令前或后，`save` 额外接受 `--memos`。业务选项保持在 TOML，不增加用于组件、目录、账号、日志级别的命令行参数。未指定子命令只展示帮助。
 
+日志默认由 Loguru 输出到控制台 stderr，Rich 的交互和结果显示在 stdout。未指定 `log_file` 时不创建日志文件；配置 `log_file` 或传入 `--log-file` 后，同时输出到控制台和文件。配置加载错误也会在控制台留下异常堆栈；帮助与版本不初始化运行日志。
+
+默认 INFO 记录截图落盘、目标定位、动作执行和校验、滚动拼接、媒体加载、Windows 另存为、文件校验及归档步骤。需要查看逐轮校验时，在配置中设置 `log_level = "DEBUG"`。
+
+日志步骤、可选文件输出和实机调试记录见 `doc/logging.md`。
+
 旧 `deduplicator`、`duplicate_stop`、`duplicate_limit`、`database` 和 Observation JSON/SQLite 导入配置已经移除；本地归档是新的数据交付契约。调整旧配置时参考现有示例文件。
 
 ## 归档和去重
@@ -76,7 +83,7 @@ media_load_timeout_seconds = 30
 
 JSON 记录粗略日期、人物、文案、完整度、截图证据及所有已关联媒体。日期目录使用 `YYYY-MM-DD`。人物名统一去掉 emoji，例如 `朋友-牛哥🐮` 变成 `朋友-牛哥`，目录及去重使用清洗后的名字；JSON 的 `person_raw` 保留解析原文。目录中的 Windows 非法字符替换为下划线，清洗后没有文字的名字使用 `unknown_person`。同账号下按人物与完整文案合并归档；日期不参与身份哈希，媒体按文件字节哈希去重。未知日期保留 `unknown_date`，人物或文案不完整保留 `unidentified_*`，不凭未知信息错误合并。
 
-采集到的闭合片段逐条归档，末尾未闭合片段在停止时留痕；`data/screenshot` 仍用于原始截图、动作证据和媒体暂存。保存命令扫描配置账号目录下的 `post.json`，校验元信息身份、资源路径、文件存在性以及媒体大小和 SHA-256。遇到错误停止并写入文件日志，不跳过后宣称全部保存成功。
+采集到的闭合片段逐条归档，末尾未闭合片段在停止时留痕；`data/screenshot` 仍用于原始截图、动作证据和媒体暂存。保存命令扫描配置账号目录下的 `post.json`，校验元信息身份、资源路径、文件存在性以及媒体大小和 SHA-256。遇到错误停止并记录异常日志，不跳过后宣称全部保存成功。
 
 ## 界面采集
 

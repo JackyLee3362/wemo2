@@ -205,6 +205,9 @@ class UiController:
             expectation=expectation,
             workflow=workflow_name,
         )
+        logger.info(
+            "[动作] 开始 {} / {}，动作 ID={}", operation, name, result.action_id
+        )
         evidence_start = len(self._artifacts)
         timeout = self.config.verification_timeout if timeout is None else timeout
         try:
@@ -233,6 +236,14 @@ class UiController:
                     raise ValueError("滚轮步数必须为 1 到 10 的整数")
                 result.wheel_steps = wheel_steps
             before, target = self._prepare(result, source_page, region, locate_target)
+            logger.info(
+                "[定位] {}，坐标=({}, {})，范围={}×{}",
+                name,
+                target.bounds.x,
+                target.bounds.y,
+                target.bounds.width,
+                target.bounds.height,
+            )
             if operation == "scroll" and region is not None:
                 static_region = self.profile.feed_static_bounds(
                     region, before.surface.scale
@@ -253,8 +264,14 @@ class UiController:
             elif operation == "right_click":
                 self.driver.right_click(before, target)
             elif operation == "scroll":
+                logger.info("[滚动] 发送一次滚轮输入，步数={}", wheel_steps)
                 self.driver.scroll(before, target, wheel_steps)
             else:
+                logger.info(
+                    "[滑动] 发送一次拖动输入，方向={}，距离={} 像素",
+                    direction,
+                    distance,
+                )
                 self.driver.swipe(before, target, direction, distance)
             result.executed = True
             result.status = "executed"
@@ -295,6 +312,9 @@ class UiController:
                     result.before, after, result.expectation, self.profile, self.locator
                 )
             result.validation = checked
+            logger.debug(
+                "[校验] {}，状态={}，{}", result.name, checked.status, checked.message
+            )
             if checked.status == "passed":
                 result.status = "verified"
                 return
@@ -320,12 +340,18 @@ class UiController:
                 result.status = "failed"
                 result.error = f"无法保存动作证据：{error}；原始错误：{result.error}"
         self.results.append(result)
+        message = "未配置后置校验"
+        if result.validation is not None:
+            message = result.validation.message
         logger.info(
-            "动作 {}：{}，已尝试 {}，已执行 {}",
+            "[动作] 完成 {} / {}：{}，已尝试={}，已执行={}，校验={}，动作 ID={}",
+            result.operation,
             result.name,
             result.status,
             result.attempted,
             result.executed,
+            message,
+            result.action_id,
         )
         return result
 
@@ -407,6 +433,9 @@ class UiController:
             name=name or operation,
             workflow=workflow_name,
             direction=direction,
+        )
+        logger.info(
+            "[动作] 开始 {} / {}，动作 ID={}", operation, result.name, result.action_id
         )
         start = len(self._artifacts)
         value = None
@@ -689,6 +718,15 @@ class UiController:
                 raise RuntimeError(f"媒体步骤前置状态不满足：{checked.message}")
 
         def execute(name: str, step: MediaStepSpec) -> object:
+            logger.info(
+                "[媒体流程] {} / {}，动作={}，前置={}，后置={}",
+                workflow_name,
+                name,
+                step.action,
+                step.before,
+                step.expect,
+            )
+
             def before(frame: Screenshot) -> None:
                 require(frame, step.before)
 
@@ -730,6 +768,11 @@ class UiController:
                     settle_seconds=step.settle_seconds,
                 )
             elif step.action == "wait_ready":
+                logger.info(
+                    "[媒体加载] 先等待 {} 秒，总等待上限 {} 秒，加载校验通过后再右键",
+                    load_wait_seconds,
+                    load_timeout_seconds,
+                )
                 result = ActionResult(
                     operation="wait_ready", name=name, workflow=workflow_name
                 )

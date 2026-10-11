@@ -11,7 +11,7 @@ from wemo2.core.config import AppConfig, load_config
 
 
 class ConfigTests(unittest.TestCase):
-    """验证两个子命令的配置优先级、共用路径、帮助与文件日志。"""
+    """验证配置优先级、帮助、默认控制台日志及显式文件输出。"""
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -34,7 +34,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.store, "pseudo")
         self.assertEqual(config.resource_dir, self.cwd / "data/moments")
         self.assertEqual(config.account, "default")
-        self.assertEqual(config.log_file, self.cwd / "logs/wemo2.log")
+        self.assertIsNone(config.log_file)
 
     def test_priority_and_explicit_default_value(self):
         path = self.write_config(
@@ -153,11 +153,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertEqual(result.stdout, "")
         self.assertIn("执行失败", result.stderr)
-        self.assertNotIn("Traceback", result.stderr)
-        self.assertIn(
-            "RuntimeError: failed",
-            (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8"),
-        )
+        self.assertIn("Traceback", result.stderr)
+        self.assertIn("RuntimeError: failed", result.stderr)
+        self.assertFalse((self.cwd / "logs").exists())
 
     def test_save_missing_archive_does_not_report_success(self):
         path = self.write_config('collector="pseudo"\n')
@@ -172,21 +170,51 @@ class ConfigTests(unittest.TestCase):
             result = self.invoke(["collect", "--config", str(path)])
         self.assertEqual(result.exit_code, 2)
         launch.assert_not_called()
-        self.assertIn(
-            "配置加载失败", (self.cwd / "logs/wemo2.log").read_text(encoding="utf-8")
-        )
+        self.assertIn("配置加载失败", result.stderr)
+        self.assertFalse((self.cwd / "logs").exists())
         with self.assertRaises(FileNotFoundError):
             load_config(config_path="missing.toml", cwd=self.cwd)
 
-    def test_log_initialization_failure_retains_startup_log(self):
+    def test_file_log_initialization_failure_keeps_console_error_log(self):
         blocked = self.cwd / "blocked"
         blocked.write_text("not a directory", encoding="utf-8")
         with patch("wemo2.core.services.run_collect") as run:
             result = self.invoke(["collect", "--log-file", "blocked/run.log"])
         self.assertEqual(result.exit_code, 1)
-        self.assertIn("无法初始化日志文件", result.stderr)
-        self.assertIn("详细日志", result.stderr)
+        self.assertIn("无法初始化日志输出", result.stderr)
+        self.assertIn("无法初始化运行日志", result.stderr)
+        self.assertIn("Traceback", result.stderr)
         run.assert_not_called()
+
+    def test_default_cli_prints_steps_to_stderr_without_creating_log_files(self):
+        path = self.write_config('collector="pseudo"\n')
+        result = self.invoke(["collect", "--config", str(path)])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("采集完成", result.stdout)
+        self.assertIn("[命令] 开始执行 collect", result.stderr)
+        self.assertIn("[采集] 已创建采集器", result.stderr)
+        self.assertIn("[命令] collect 执行完成", result.stderr)
+        self.assertNotIn("日志文件", result.stdout)
+        self.assertFalse((self.cwd / "logs").exists())
+
+    def test_file_log_is_optional_and_does_not_disable_console_output(self):
+        path = self.write_config('collector="pseudo"\nlog_file="logs/from-file.log"\n')
+        result = self.invoke(
+            ["collect", "--config", str(path), "--log-file", "logs/from-cli.log"]
+        )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("[命令] 开始执行 collect", result.stderr)
+        content = (self.cwd / "logs/from-cli.log").read_text(encoding="utf-8")
+        self.assertIn("[命令] 开始执行 collect", content)
+        self.assertIn("[命令] collect 执行完成", content)
+        self.assertFalse((self.cwd / "logs/from-file.log").exists())
+
+    def test_each_invocation_outputs_each_command_step_only_once(self):
+        path = self.write_config('collector="pseudo"\n')
+        for _ in range(2):
+            result = self.invoke(["collect", "--config", str(path)])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(result.stderr.count("[命令] 开始执行 collect"), 1)
 
     def test_business_options_remain_in_toml(self):
         for option in (

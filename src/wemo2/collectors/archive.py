@@ -95,10 +95,16 @@ class MomentArchive:
         key = moment_key(details.person, details.text, details.text_status)
         folder = self._folder(key, details)
         folder.mkdir(parents=True, exist_ok=True)
-        logger.info("朋友圈资源归档目录：{}", folder.resolve())
+        logger.info(
+            "[归档] 开始，人物={}，日期={}，目录={}",
+            details.person,
+            details.approximate_date,
+            folder.resolve(),
+        )
         metadata = folder / "post.json"
         complete = details.header_top is not None and not segment.partial_end
         if metadata.is_file():
+            logger.info("[归档去重] 复用已有朋友圈，合并截图证据和媒体：{}", metadata)
             record = MomentRecord.model_validate_json(
                 metadata.read_text(encoding="utf-8")
             )
@@ -168,6 +174,13 @@ class MomentArchive:
         finally:
             write_model_json(metadata, record)
             self.paths.extend([metadata, primary, screenshot])
+            logger.info(
+                "[归档] 已写入元信息，媒体={}，错误={}，截图完整={}，路径={}",
+                len(record.media),
+                len(record.errors),
+                record.screenshot_complete,
+                metadata,
+            )
 
     def _copy_media(
         self, folder: Path, record: MomentRecord, saved: SavedMedia
@@ -195,6 +208,7 @@ class MomentArchive:
             )
         )
         self.paths.append(destination)
+        logger.info("[归档媒体] 已拷贝并登记 {}：{}", saved.kind, destination)
 
     def _resource_path(self, folder: Path, relative: str) -> Path:
         return resolve_resource_path(folder, relative)

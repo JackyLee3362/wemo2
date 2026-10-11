@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from loguru import logger
 from PIL import Image
 
 from wemo2.collectors.models import Platform, Screenshot, Surface
@@ -26,8 +27,15 @@ class WindowsScreenshotter:
         self.timezone = resolve_timezone(timezone)
 
     def capture(self, surface: Surface) -> Screenshot:
+        """截图、校验并保存证据，日志分别记录开始与实际落盘结果。"""
         if sys.platform != "win32" or surface.platform != Platform.windows:
             raise RuntimeError("截图器仅支持 Windows 窗口")
+        logger.info(
+            "[截图] 开始，窗口={}，客户区={}×{}",
+            surface.surface_id,
+            surface.bounds.width,
+            surface.bounds.height,
+        )
         image = self._capture_image(surface)
         try:
             validate_image(image, (surface.bounds.width, surface.bounds.height))
@@ -49,6 +57,7 @@ class WindowsScreenshotter:
             image_path.with_suffix(".json").write_text(
                 frame.model_dump_json(indent=2), encoding="utf-8"
             )
+            logger.info("[截图] 已保存图片和元信息：{}", image_path)
             return frame
         finally:
             image.close()

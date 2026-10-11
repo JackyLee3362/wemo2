@@ -1,4 +1,5 @@
 import ast
+import io
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -23,7 +24,7 @@ from wemo2.common.logging import add_file_sink, initialize_startup_logging
 
 
 class ExceptionLoggingTests(unittest.TestCase):
-    """验证异常日志实际落盘，覆盖启动、重试、回滚以及所有捕获分支的规范。"""
+    """验证控制台与文件异常日志，覆盖启动、重试、回滚和所有捕获分支。"""
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -54,12 +55,12 @@ class ExceptionLoggingTests(unittest.TestCase):
                             and function.attr == "exception"
                         ):
                             logged = True
-                    # 启动日志回退要先准备文件 sink，但不能未经记录就退出该分支。
+                    # 重新抛出、跳过或返回前，必须先留下异常堆栈。
                     if isinstance(statement, (ast.Raise, ast.Return, ast.Continue)):
                         self.assertTrue(logged, f"{path}:{node.lineno}")
                 self.assertTrue(logged, f"{path}:{node.lineno}")
 
-    def test_cli_config_error_writes_stack_without_terminal_traceback(self):
+    def test_cli_config_error_prints_stack_to_console_without_creating_file(self):
         config = self.path / "bad.toml"
         config.write_text(
             'collector = "windows_screenshot"\n[collector_options]\ntimezone = "Invalid/Timezone"\n',
@@ -68,14 +69,13 @@ class ExceptionLoggingTests(unittest.TestCase):
         with patch("wemo2.core.config.Path.cwd", return_value=self.path):
             result = CliRunner().invoke(cli, ["collect", "--config", str(config)])
         self.assertEqual(result.exit_code, 2)
-        self.assertNotIn("Traceback", result.stderr)
-        log = (self.path / "logs/wemo2.log").read_text(encoding="utf-8")
-        self.assertIn("解析时区", log)
-        self.assertIn("配置加载失败", log)
-        self.assertIn("Invalid/Timezone", log)
-        self.assertIn("Traceback", log)
+        self.assertIn("解析时区", result.stderr)
+        self.assertIn("配置加载失败", result.stderr)
+        self.assertIn("Invalid/Timezone", result.stderr)
+        self.assertIn("Traceback", result.stderr)
+        self.assertFalse((self.path / "logs").exists())
 
-    def test_invalid_running_log_path_is_recorded_in_startup_log(self):
+    def test_invalid_running_log_path_is_recorded_on_console(self):
         blocked = self.path / "blocked"
         blocked.write_text("file", encoding="utf-8")
         with patch("wemo2.core.config.Path.cwd", return_value=self.path):
@@ -83,33 +83,22 @@ class ExceptionLoggingTests(unittest.TestCase):
                 cli, ["collect", "--log-file", str(blocked / "run.log")]
             )
         self.assertEqual(result.exit_code, 1)
-        self.assertNotIn("Traceback", result.stderr)
-        log = (self.path / "logs/wemo2.log").read_text(encoding="utf-8")
-        self.assertIn("无法初始化运行日志文件", log)
-        self.assertIn("blocked", log)
-        self.assertIn("Traceback", log)
+        self.assertIn("无法初始化运行日志", result.stderr)
+        self.assertIn("blocked", result.stderr)
+        self.assertIn("Traceback", result.stderr)
+        self.assertFalse((self.path / "logs").exists())
 
-    def test_unwritable_startup_path_uses_fallback_and_logs_original_error(self):
-        real_add = add_file_sink
-        calls = 0
-
-        def add(path, level):
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                raise PermissionError("startup directory denied")
-            return real_add(path, level)
-
+    def test_startup_logging_uses_current_stderr_without_touching_disk(self):
+        output = io.StringIO()
         with (
-            patch("wemo2.common.logging.add_file_sink", side_effect=add),
-            patch("wemo2.common.logging.gettempdir", return_value=str(self.path)),
+            patch("wemo2.common.logging.sys.stderr", output),
+            patch("wemo2.common.logging.add_file_sink") as add_file,
         ):
-            _, path = initialize_startup_logging()
-        self.assertEqual(path, self.path / "wemo2/startup.log")
-        self.assertIn(
-            "PermissionError: startup directory denied",
-            path.read_text(encoding="utf-8"),
-        )
+            sink = initialize_startup_logging()
+            logger.error("configuration unavailable")
+            logger.remove(sink)
+        add_file.assert_not_called()
+        self.assertIn("configuration unavailable", output.getvalue())
 
     def test_successful_capture_retry_logs_first_failure(self):
         surface = Surface(

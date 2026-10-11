@@ -78,7 +78,8 @@ class PipelineTests(unittest.TestCase):
         PseudoCollector(self.config.resource_dir).collect()
         path = self.path / "config.toml"
         path.write_text(
-            'collector="pseudo"\nresource_dir="resources"\n', encoding="utf-8"
+            'collector="pseudo"\nresource_dir="resources"\nlog_file="logs/wemo2.log"\n',
+            encoding="utf-8",
         )
         with (
             patch("wemo2.core.config.Path.cwd", return_value=self.path),
@@ -91,6 +92,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 1)
         self.assertNotIn("保存流程完成", result.stdout)
         self.assertIn("远端失败", result.stderr)
+        self.assertIn("Traceback", result.stderr)
         self.assertIn(
             "RuntimeError: 远端失败",
             (self.path / "logs/wemo2.log").read_text(encoding="utf-8"),

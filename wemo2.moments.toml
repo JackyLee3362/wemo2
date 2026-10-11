@@ -23,6 +23,7 @@ settle_seconds = 0.6
 timeout_seconds = 2
 recognize_nickname = true
 save_media = true
+use_image_arrows = true
 media_load_wait_seconds = 5
 media_load_timeout_seconds = 30
 # 未指定 region 时按 UiProfile 布局和 DPI 裁出右侧朋友圈列表。

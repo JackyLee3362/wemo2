@@ -14,6 +14,11 @@ from wemo2_collector.controller import UiController
 from wemo2_collector.feed import FeedCapture, overlap_shift
 from wemo2_collector.locating import AirtestLocator
 from wemo2_collector.media import MediaCapture
+from wemo2_collector.media_navigation import (
+    ArrowImageStrategy,
+    ReopenImageStrategy,
+    image_save_strategy,
+)
 from wemo2_collector.models import (
     ActionResult,
     ControllerConfig,
@@ -254,6 +259,11 @@ class FeedCaptureTests(unittest.TestCase):
         )
         self.assertFalse(
             locator.is_enlarged_preview(source, moved, bounds, (0, 0, 1, 1), 0.9, 1.5)
+        )
+        self.assertTrue(
+            locator.is_enlarged_preview(
+                source, moved, bounds, (0, 0, 1, 1), 0.9, 1.5, allow_independent=True
+            )
         )
 
     def test_unverifiable_overlap_stops_and_retains_both_raw_frames(self):
@@ -695,7 +705,9 @@ class FeedCaptureTests(unittest.TestCase):
             return [menu]
 
         media.reader.read.side_effect = read
-        media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        # 测试关注加载提示消失后的输入顺序，不让证据文件写入速度决定超时。
+        with patch("wemo2_collector.controller.time.monotonic", return_value=0):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
         wait = media.controller.results[1]
         self.assertEqual(wait.operation, "wait_ready")
         self.assertEqual(wait.status, "verified")
@@ -717,6 +729,181 @@ class FeedCaptureTests(unittest.TestCase):
         media.controller.driver.right_click.assert_not_called()
         media.controller.driver.save_dialog.assert_not_called()
         self.assertEqual(media.controller.results[-1].operation, "wait_ready")
+
+    def test_three_images_save_with_two_arrows_and_one_viewer_close(self):
+        media = self.make_media_capture()
+        media.controller.locator.is_enlarged_preview.return_value = True
+        tiles = [
+            Rect(x=10, y=40, width=50, height=50),
+            Rect(x=70, y=40, width=50, height=50),
+            Rect(x=130, y=40, width=50, height=50),
+        ]
+        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        driver = media.controller.driver
+        self.assertEqual(driver.click.call_count, 4)  # 一次打开图片与三次点击另存为。
+        self.assertEqual(driver.switch_image.call_count, 2)
+        self.assertEqual(driver.right_click.call_count, 3)
+        self.assertEqual(driver.save_dialog.call_count, 3)
+        driver.close_viewer.assert_called_once()
+        self.assertIsNone(media.viewer)
+        self.assertEqual(len(media.previews), 3)
+        self.assertTrue(all(item.workflow_complete for item in media.previews))
+        record = json.loads(
+            next(media.directory.glob("card_*.json")).read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(record["media"]), 3)
+        self.assertEqual([item.bounds.x for item in media.previews], [10, 70, 130])
+
+    def test_arrow_failure_reopens_remaining_images_without_resaving_first(self):
+        media = self.make_media_capture()
+        media.controller.locator.is_enlarged_preview.return_value = False
+        media.controller.config = media.controller.config.model_copy(
+            update={"verification_timeout": 0.01}
+        )
+        tiles = [
+            Rect(x=10, y=40, width=50, height=50),
+            Rect(x=70, y=40, width=50, height=50),
+            Rect(x=130, y=40, width=50, height=50),
+        ]
+        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        driver = media.controller.driver
+        driver.switch_image.assert_called_once()
+        self.assertEqual(driver.save_dialog.call_count, 3)
+        self.assertEqual(driver.close_viewer.call_count, 3)
+        self.assertEqual(driver.click.call_count, 6)
+        switch = next(
+            item
+            for item in media.controller.results
+            if item.operation == "switch_image"
+        )
+        self.assertTrue(switch.executed)
+        self.assertEqual(switch.status, "failed")
+        self.assertEqual(len(media.previews), 3)
+        self.assertTrue(all(item.workflow_complete for item in media.previews))
+
+    def test_file_save_failure_never_uses_navigation_fallback_or_cache(self):
+        media = self.make_media_capture()
+        media.controller.locator.is_enlarged_preview.return_value = True
+        calls = 0
+
+        original_save = media.controller.driver.save_dialog.side_effect
+
+        def checked_save(directory):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("第二张保存失败")
+            return original_save(directory)
+
+        media.controller.driver.save_dialog.side_effect = checked_save
+        tiles = [
+            Rect(x=10, y=40, width=50, height=50),
+            Rect(x=70, y=40, width=50, height=50),
+        ]
+        with (
+            patch("wemo2_collector.media.media_tiles", return_value=tiles),
+            self.assertRaisesRegex(RuntimeError, "第二张保存失败"),
+        ):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        driver = media.controller.driver
+        self.assertEqual(driver.save_dialog.call_count, 2)
+        self.assertEqual(driver.click.call_count, 3)
+        driver.close_viewer.assert_not_called()
+        self.assertEqual(media.saved, {})
+        self.assertFalse(media.previews[0].workflow_complete)
+        record = json.loads(
+            next(media.directory.glob("card_*.json")).read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(record["media"]), 1)
+        self.assertEqual(record["status"], "failed")
+
+    def test_reopen_strategy_can_be_selected_in_configuration(self):
+        self.assertIsInstance(
+            image_save_strategy(FeedCaptureConfig().use_image_arrows),
+            ArrowImageStrategy,
+        )
+        self.assertIsInstance(image_save_strategy(False), ReopenImageStrategy)
+        media = self.make_media_capture()
+        media.image_strategy = image_save_strategy(False)
+        tiles = [
+            Rect(x=10, y=40, width=50, height=50),
+            Rect(x=70, y=40, width=50, height=50),
+        ]
+        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        driver = media.controller.driver
+        driver.switch_image.assert_not_called()
+        self.assertEqual(driver.close_viewer.call_count, 2)
+        self.assertEqual(driver.click.call_count, 4)
+
+    def test_video_closes_viewer_and_next_image_reopens_without_arrow(self):
+        media = self.make_media_capture()
+        video = self.path / "fixture.mp4"
+        video.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"video fixture")
+        original_save = media.controller.driver.save_dialog.side_effect
+        calls = 0
+
+        def save(directory):
+            nonlocal calls
+            calls += 1
+            path = original_save(directory)
+            return video if calls == 1 else path
+
+        media.controller.driver.save_dialog.side_effect = save
+        tiles = [
+            Rect(x=10, y=40, width=50, height=50),
+            Rect(x=70, y=40, width=50, height=50),
+        ]
+        with patch("wemo2_collector.media.media_tiles", return_value=tiles):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        driver = media.controller.driver
+        driver.switch_image.assert_not_called()
+        self.assertEqual(driver.close_viewer.call_count, 2)
+        self.assertEqual(
+            [item.file.kind for item in media.previews], ["video", "image"]
+        )
+        self.assertTrue(all(item.workflow_complete for item in media.previews))
+
+    def test_changed_window_prevents_arrow_and_automatic_exit(self):
+        media = self.make_media_capture()
+        bounds = Rect(x=10, y=40, width=50, height=50)
+        media._save_media(self.first, bounds, 40, keep_viewer=True)
+        unrelated = self.second.model_copy(
+            update={
+                "surface": self.surface.model_copy(update={"surface_id": "unrelated"}),
+                "captured_at": datetime.now(UTC),
+            }
+        )
+        media.controller.capture = MagicMock(return_value=unrelated)
+        with self.assertRaisesRegex(RuntimeError, "图片查看器状态已变化"):
+            media.image_strategy.save(
+                media,
+                MagicMock(source=self.first, media=[]),
+                [Rect(x=70, y=40, width=50, height=50)],
+                0,
+                Rect(x=0, y=0, width=200, height=300),
+            )
+        driver = media.controller.driver
+        driver.switch_image.assert_not_called()
+        driver.close_viewer.assert_not_called()
+        self.assertEqual(driver.click.call_count, 2)
+        self.assertFalse(media.previews[0].workflow_complete)
+
+    def test_driver_image_navigation_uses_left_and_right_keys_after_focus_check(self):
+        driver = WindowsDriver()
+        driver.device = MagicMock()
+        with patch.object(driver, "verify_capture") as verify:
+            driver.switch_image(self.first, "right")
+            driver.switch_image(self.first, "left")
+            self.assertEqual(verify.call_count, 2)
+            with self.assertRaisesRegex(ValueError, "left 或 right"):
+                driver.switch_image(self.first, "up")
+        self.assertEqual(
+            [call.args[0] for call in driver.device.keyevent.call_args_list],
+            ["{RIGHT}", "{LEFT}"],
+        )
 
     def test_changed_media_content_cannot_be_clicked(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)

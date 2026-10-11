@@ -376,3 +376,7 @@ JSON 保存粗略日期、时间原文、人物、文案、截图和所有已关
 完整字段、目录结构与去重边界见 [朋友圈资源协议](doc/moment-resources.md)。
 
 视频/图片打开后默认等待 5 秒再检查加载提示，最多等待 30 秒；配置项为 `[collector_options.feed]` 下的 `media_load_wait_seconds`、`media_load_timeout_seconds`。加载超时不右键、不自动重发输入。Windows 另存为使用标准文件名输入框（控件 ID 1001）和保存按钮（控件 ID 1），与系统配色无关。完整朋友圈每完成一条就归档；跨屏未闭合片段在停止时保存。
+
+图片保存支持两种策略，在 `[collector_options.feed]` 设置 `use_image_arrows = true`（默认）。同一可见卡片内，保存第一张后保持查看器打开，发送右方向键，核对下一张缩略图的放大图后再保存，最后退出；平台驱动也支持左方向键。切换失败时只发送一次退出，验证回到列表后对剩余候选逐张重新点击。设置 `use_image_arrows = false` 可直接使用逐张重开策略。视频保存后退出，不连续翻图；文件保存失败不触发导航兜底。
+
+Windows 文件选择器使用 `pywinauto.Desktop(backend="win32")`：文件名输入框 ID 1001 调用 `set_edit_text`，保存按钮 ID 1 调用控件 `click`。微信查看器中的右键菜单仍通过 OCR 识别“另存为”，再由 Airtest 点击；两部分使用的技术不同。

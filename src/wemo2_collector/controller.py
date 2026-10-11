@@ -389,7 +389,7 @@ class UiController:
 
     def platform_step(
         self,
-        operation: Literal["save_file", "close_viewer"],
+        operation: Literal["save_file", "close_viewer", "switch_image"],
         action: Callable,
         *,
         name: str | None = None,
@@ -399,10 +399,14 @@ class UiController:
         timeout: float = 5,
         workflow_name: str | None = None,
         settle_seconds: float = 0,
+        direction: Direction | None = None,
     ) -> object:
         """记录一次平台对话框操作，失败保留执行事实，不自动重发。"""
         result = ActionResult(
-            operation=operation, name=name or operation, workflow=workflow_name
+            operation=operation,
+            name=name or operation,
+            workflow=workflow_name,
+            direction=direction,
         )
         start = len(self._artifacts)
         value = None
@@ -497,6 +501,112 @@ class UiController:
             method="ocr",
         )
 
+    def switch_image(
+        self,
+        source: Screenshot,
+        bounds: Rect,
+        viewer: Screenshot,
+        *,
+        direction: Literal["left", "right"] = "right",
+        workflow_name: str = "save_media",
+    ) -> Screenshot:
+        """发送一次方向键并验证目标缩略图的放大版本，失败交由调用者选择兜底。"""
+        workflow = self.profile.media_workflow(workflow_name)
+        current = viewer
+
+        def before(frame: Screenshot) -> None:
+            nonlocal current
+            if frame.surface != viewer.surface or self.driver.is_save_dialog():
+                raise RuntimeError("图片切换前查看器窗口已变化，未发送方向键")
+            current = frame
+
+        def verify(frame: Screenshot) -> ValidationResult:
+            passed = (
+                frame.surface == viewer.surface
+                and self.locator.is_enlarged_preview(
+                    source,
+                    frame,
+                    bounds,
+                    workflow.viewer_region,
+                    workflow.viewer_threshold,
+                    workflow.viewer_min_scale,
+                    allow_independent=True,
+                )
+            )
+            return ValidationResult(
+                status="passed" if passed else "not_met",
+                message="方向键切换后的目标图片内容校验",
+            )
+
+        self.platform_step(
+            "switch_image",
+            lambda: self.driver.switch_image(current, direction),
+            before=before,
+            verify=verify,
+            timeout=self.config.verification_timeout,
+            workflow_name=workflow_name,
+            settle_seconds=0.6,
+            direction=direction,
+        )
+        frame = self.results[-1].after
+        if frame is None:
+            raise RuntimeError("图片切换后未交付截图")
+        return frame
+
+    def close_media_viewer(
+        self,
+        source: Screenshot,
+        bounds: Rect,
+        viewer: Screenshot,
+        reader: TextRecognizer,
+        *,
+        workflow_name: str = "save_media",
+        alternate_bounds: Rect | None = None,
+    ) -> None:
+        """关闭已保存图片的查看器并验证原列表；只允许退出本次确认的查看器。"""
+        workflow = self.profile.media_workflow(workflow_name)
+
+        def before(frame: Screenshot) -> None:
+            if frame.surface != viewer.surface or self.driver.is_save_dialog():
+                raise RuntimeError("图片查看器状态已变化，不能自动退出")
+            if frame.surface == source.surface:
+                candidates = [bounds]
+                if alternate_bounds is not None:
+                    candidates.append(alternate_bounds)
+                for candidate in candidates:
+                    if self.locator.is_enlarged_preview(
+                        source,
+                        frame,
+                        candidate,
+                        workflow.viewer_region,
+                        workflow.viewer_threshold,
+                        workflow.viewer_min_scale,
+                    ):
+                        return
+                raise RuntimeError("未确认内嵌图片查看器，不能自动退出")
+
+        def verify(frame: Screenshot) -> ValidationResult:
+            passed = frame.surface == source.surface
+            if passed:
+                self._media_target(
+                    frame, workflow.steps[workflow.entry].target, source, bounds, reader
+                )
+            return ValidationResult(
+                status="passed" if passed else "not_met",
+                message="图片批次结束或兜底前返回原列表",
+            )
+
+        self.platform_step(
+            "close_viewer",
+            lambda: self.driver.close_viewer(
+                source.surface, allow_embedded=viewer.surface == source.surface
+            ),
+            before=before,
+            verify=verify,
+            workflow_name=workflow_name,
+            settle_seconds=0.6,
+        )
+
     def run_media_workflow(
         self,
         source: Screenshot,
@@ -508,6 +618,8 @@ class UiController:
         workflow_name: str = "save_media",
         load_wait_seconds: float = 5,
         load_timeout_seconds: float = 30,
+        start_in_viewer: Screenshot | None = None,
+        keep_viewer: Callable[[], bool] | None = None,
     ) -> Path:
         """执行已校验的媒体步骤图；每次输入仅执行一次，验证失败即停止并留证。"""
         self.profile.validate_structure()
@@ -538,9 +650,26 @@ class UiController:
             else:
                 passed = False
                 if not self.driver.is_save_dialog():
-                    if workflow.viewer_mode in ("auto", "independent"):
+                    if start_in_viewer is not None:
+                        passed = (
+                            frame.surface == start_in_viewer.surface
+                            and self.locator.is_enlarged_preview(
+                                source,
+                                frame,
+                                bounds,
+                                workflow.viewer_region,
+                                workflow.viewer_threshold,
+                                workflow.viewer_min_scale,
+                                allow_independent=True,
+                            )
+                        )
+                    elif workflow.viewer_mode in ("auto", "independent"):
                         passed = frame.surface.surface_id != source.surface.surface_id
-                    if not passed and workflow.viewer_mode in ("auto", "embedded"):
+                    if (
+                        start_in_viewer is None
+                        and not passed
+                        and workflow.viewer_mode in ("auto", "embedded")
+                    ):
                         passed = self.locator.is_enlarged_preview(
                             source,
                             frame,
@@ -671,8 +800,20 @@ class UiController:
                 return None
 
         current = workflow.entry
+        if start_in_viewer is not None:
+            current = workflow.steps[current].next
         for _ in range(workflow.max_steps):
+            if current is None:
+                raise RuntimeError("媒体流程没有查看器保存步骤")
             step = workflow.steps[current]
+            if (
+                step.action == "close_viewer"
+                and keep_viewer is not None
+                and keep_viewer()
+            ):
+                if path is None:
+                    raise RuntimeError("尚未保存文件，不能保留查看器进入下一张")
+                return path  # 保存和查看器已验证，退出由图片批次策略负责留证。
             value = execute(current, step)
             if isinstance(value, Path):
                 path = value

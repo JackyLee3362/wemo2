@@ -161,15 +161,17 @@ class AirtestLocator:
         region: tuple[float, float, float, float],
         threshold: float,
         min_scale: float,
+        *,
+        allow_independent: bool = False,
     ) -> bool:
-        """用 Airtest 多尺度匹配确认同窗口已放大原缩略图，原列表不能通过校验。"""
+        """用 Airtest 匹配放大的原缩略图；独立查看器须由调用者先校验窗口归属。"""
         # 仅在媒体验证时加载图像引擎，启动和帮助命令不受影响。
         import numpy as np
         from airtest.aircv.multiscale_template_matching import (
             MultiScaleTemplateMatching,
         )
 
-        if current.surface != source.surface:
+        if current.surface != source.surface and not allow_independent:
             return False
         configure_airtest_logging()
         x, y, width, height = region

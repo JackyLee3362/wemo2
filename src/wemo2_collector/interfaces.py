@@ -63,6 +63,10 @@ class BaseDriver(ABC):
         """只读检查当前窗口是否为保存对话框，不输入文件名。"""
         return False
 
+    def switch_image(self, frame: Screenshot, direction: str) -> None:
+        """在已验证的媒体查看器中发送一次左右方向键，不自动重发。"""
+        raise NotImplementedError("当前平台尚未实现图片切换")
+
     def close_viewer(self, original: Surface, *, allow_embedded: bool = False) -> None:
         """关闭本次打开的查看器并确认回到原列表窗口。"""
         raise NotImplementedError("当前平台尚未实现返回列表")

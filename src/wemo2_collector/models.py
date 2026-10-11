@@ -124,6 +124,7 @@ class ActionResult(BaseModel):
         "swipe",
         "scroll",
         "wait_ready",
+        "switch_image",
         "save_file",
         "close_viewer",
     ]
@@ -158,6 +159,7 @@ class FeedCaptureConfig(BaseModel):
     recognize_nickname: bool = True
     save_media: bool = True
     media_workflow: str = Field(default="save_media", min_length=1)
+    use_image_arrows: bool = True  # 优先方向键切换；False 为逐张退出重开。
     media_load_wait_seconds: float = Field(default=5, ge=0, le=30)
     media_load_timeout_seconds: float = Field(default=30, gt=0, le=60)
 

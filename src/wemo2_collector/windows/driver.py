@@ -18,7 +18,7 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
-from wemo2_collector.validation import validate_target
+from wemo2_collector.validation import validate_frame, validate_target
 
 
 class WindowsDriver(BaseDriver):
@@ -287,6 +287,18 @@ class WindowsDriver(BaseDriver):
                 frame.surface.bounds.y + bounds.y + bounds.height // 2,
             )
         )
+
+    def switch_image(self, frame: Screenshot, direction: str) -> None:
+        """向已校验且获得焦点的微信查看器发送一次方向键。"""
+        validate_frame(frame)
+        self.verify_capture(frame.surface)
+        if direction == "right":
+            key = "{RIGHT}"
+        elif direction == "left":
+            key = "{LEFT}"
+        else:
+            raise ValueError("图片切换方向只能是 left 或 right")
+        self.device.keyevent(key)
 
     def save_dialog(self, directory: Path) -> Path:
         """仅处理同进程标准另存为对话框；不猜测无法识别的文件输入框。"""

@@ -246,3 +246,9 @@ MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝
 加载步骤是只读 `wait_ready`，ActionResult 的 attempted/executed 均为 false；等待后通过查看器状态与 OCR 加载提示校验，超时停止。等待与总超时配置在 FeedCaptureConfig。标准保存对话框使用 Win32 控件 ID 填写及提交，不发送依赖焦点的 Enter，也不使用图片模板。
 
 滚动进展、动画稳定与相邻视口匹配均使用 UiProfile.feed_static_width 定义的头像侧栏，避开播放中的视频。默认 wheel_steps=3，在列表左侧空隙发送一次滚轮。验证失败也保存最后原始帧，不把视频播放当作滚动或历史到底。FeedCapture 的进度回调在当前帧媒体处理后增量导出闭合片段，采集结束导出末段。
+
+图片批次由 `media_navigation.py` 的 `ImageSaveStrategy` 契约及 `ArrowImageStrategy`、`ReopenImageStrategy` 两种实现维护，选择集中在 `image_save_strategy`。FeedCaptureConfig.use_image_arrows 默认 true。策略只编排同一可见卡片的候选，不跨朋友圈或自动寻找未定位图片。
+
+控制器允许从已验证的查看器继续媒体流程，并在实际保存文件为图片时保留查看器。切换方向键的输入、后置图片内容校验与退出均记录 ActionResult；独立查看器先核对原会话窗口归属，再用 Airtest 对照目标缩略图校验放大图。不能把画面任意变化或视频播放当成下一张。只有 switch_image 失败触发重开兜底，先验证退出回到原列表，再重新定位剩余候选；保存异常、窗口归属变化或退出失败均停止，不自动重发方向键或保存。
+
+ViewerSession 保存当前查看器证据和批次缓存起点。下载文件立即留下 SavedPreview 和卡片记录，整批成功返回列表后才标记 workflow_complete，避免失败批次被缓存误当作完成。视频保存后退出；左右键由 BaseDriver.switch_image 平台能力提供，WindowsDriver 使用 Airtest 的 keyevent。标准另存为对话框仍使用 Win32 控件，与方向键切换策略无关。

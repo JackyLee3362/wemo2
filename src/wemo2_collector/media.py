@@ -5,11 +5,13 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
+from loguru import logger
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from wemo2_collector import validation
 from wemo2_collector.controller import UiController
+from wemo2_collector.media_navigation import ViewerSession, image_save_strategy
 from wemo2_collector.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
 from wemo2_collector.recognition import TextLine, TextRecognizer, file_kind, media_tiles
 
@@ -71,23 +73,51 @@ class MediaCapture:
         self.previews: list[SavedPreview] = []
         self.last_saved: SavedMedia | None = None
         self.errors: list[str] = []
+        self.viewer: ViewerSession | None = None
+        self.image_strategy = image_save_strategy(config.use_image_arrows)
+
+    def close_viewer(self, *, alternate_bounds: Rect | None = None) -> None:
+        """批次结束或切换兜底时退出查看器，成功返回后才允许复用本批媒体缓存。"""
+        session = self.viewer
+        if session is None:
+            return
+        self.controller.close_media_viewer(
+            session.source,
+            session.bounds,
+            session.viewer,
+            self.reader,
+            workflow_name=self.config.media_workflow,
+            alternate_bounds=alternate_bounds,
+        )
+        for preview in self.previews[session.preview_start :]:
+            preview.workflow_complete = True
+        self.viewer = None
 
     def _save_media(
-        self, source: Screenshot, bounds: Rect, stream_y: int
+        self,
+        source: Screenshot,
+        bounds: Rect,
+        stream_y: int,
+        *,
+        keep_viewer: bool = False,
     ) -> SavedMedia:
         self.last_saved = None
-        fresh = self.controller.capture()
-        if fresh.surface != source.surface:
-            raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
-        if not validation.region_unchanged(source, fresh, bounds):
-            raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
+        session = self.viewer
+        if session is None:
+            fresh = self.controller.capture()
+            if fresh.surface != source.surface:
+                raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
+            if not validation.region_unchanged(source, fresh, bounds):
+                raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
         box = (bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height)
         with Image.open(source.image_path) as old:
             with old.crop(box).convert("RGB") as first:
                 key = f"{stream_y}:{hashlib.sha256(first.tobytes()).hexdigest()}"
-        if key in self.saved:
+        if session is None and key in self.saved:
             return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
         for preview in self.previews:
+            if session is not None:
+                break  # 连续查看器保存需要确认当前目标，不复用列表坐标缓存。
             if not preview.workflow_complete:
                 continue
             tolerance = max(1, round(2 * source.surface.scale))
@@ -104,6 +134,10 @@ class MediaCapture:
                 return preview.file
         saved = None
         preview = None
+        preview_start = len(self.previews) if session is None else session.preview_start
+
+        def keep_image_open() -> bool:
+            return keep_viewer and saved is not None and saved.kind == "image"
 
         def on_file(path: Path) -> None:
             nonlocal saved, preview
@@ -133,11 +167,23 @@ class MediaCapture:
             workflow_name=self.config.media_workflow,
             load_wait_seconds=self.config.media_load_wait_seconds,
             load_timeout_seconds=self.config.media_load_timeout_seconds,
+            start_in_viewer=None if session is None else session.viewer,
+            keep_viewer=keep_image_open,
         )
         if saved is None:
             raise RuntimeError("媒体流程未交付验证过的文件")
-        self.saved[key] = saved
-        preview.workflow_complete = True
+        if keep_image_open():
+            frame = self.controller.results[-1].after
+            if frame is None:
+                raise RuntimeError("保存图片后未确认查看器状态，停止切换")
+            self.viewer = ViewerSession(
+                source=source, bounds=bounds, viewer=frame, preview_start=preview_start
+            )
+        else:
+            self.saved[key] = saved
+            for item in self.previews[preview_start:]:
+                item.workflow_complete = True
+            self.viewer = None
         return saved
 
     def process(
@@ -148,8 +194,6 @@ class MediaCapture:
         stream_offset: int = 0,
     ) -> None:
         """保存当前可见卡片及昵称，必要时下载媒体；不改变列表滚动位置。"""
-        from loguru import logger
-
         self.directory.mkdir(parents=True, exist_ok=True)
         top = region.y
         boundaries = []
@@ -198,6 +242,7 @@ class MediaCapture:
                             card.media_detection = (
                                 "candidates_found" if tiles else "none_detected"
                             )
+                            targets = []
                             for tile in tiles:
                                 target = Rect(
                                     x=bounds.x + tile.x,
@@ -205,13 +250,10 @@ class MediaCapture:
                                     width=tile.width,
                                     height=tile.height,
                                 )
-                                card.media.append(
-                                    self._save_media(
-                                        frame,
-                                        target,
-                                        stream_offset + target.y - region.y,
-                                    )
-                                )
+                                targets.append(target)
+                            self.image_strategy.save(
+                                self, card, targets, stream_offset, region
+                            )
                         card.status = "captured"
                     except Exception as error:
                         logger.exception(

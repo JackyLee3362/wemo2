@@ -118,7 +118,7 @@ class RoutingTests(unittest.TestCase):
         driver.device.touch.assert_not_called()
         verify.assert_not_called()
 
-    def make_router(self, already_open=False, found=True):
+    def make_router(self, already_open=False, found=True, already_selected=False):
         driver = MagicMock()
         driver.current_surface.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
@@ -127,7 +127,15 @@ class RoutingTests(unittest.TestCase):
         locator = MagicMock()
 
         def locate(frame, name):
-            discover_visible = already_open or driver.click.call_count > 0
+            discover_visible = (
+                already_open or already_selected or driver.click.call_count > 0
+            )
+            moments_selected = already_selected
+            for call in driver.click.call_args_list:
+                if call.args[1].name == "moments_menu":
+                    moments_selected = True
+            if name == "moments_menu_selected" and not moments_selected:
+                return None
             if name == "moments_entry" and (not found or discover_visible):
                 return None
             if name != "moments_entry" and not discover_visible:
@@ -234,7 +242,7 @@ class RoutingTests(unittest.TestCase):
             self.assertIsNone(locator.locate(self.frame, "moments_menu"))
             image.close()
 
-    def test_menu_action_clicks_once_then_saves_unverified_result(self):
+    def test_menu_action_clicks_once_then_verifies_selection(self):
         router = self.make_router(already_open=True)
         with patch("wemo2_collector.controller.time.sleep"):
             self.assertEqual(router.run("moments_entry"), self.frame)
@@ -243,8 +251,70 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(clicked.name, "moments_menu")
         router.controller.driver.follow_foreground.assert_called_once()
         self.assertEqual(len(router.controller.artifacts()), 3)
-        # 当前 discover 截图不能被当作朋友圈动态列表。
-        self.assertEqual(router.detect(self.frame), "discover")
+        self.assertEqual(router.last_result.status, "verified")
+        self.assertEqual(router.last_result.validation.actual_page, "moments_selected")
+        self.assertEqual(router.detect(self.frame), "moments_selected")
+        self.assertNotEqual(router.detect(self.frame), "moments")
+
+    def test_selected_moments_menu_does_not_click_again(self):
+        router = self.make_router(already_selected=True)
+        self.assertEqual(router.run("moments_entry"), self.frame)
+        router.controller.driver.click.assert_not_called()
+        self.assertIsNone(router.last_result)
+
+    def test_menu_selection_timeout_does_not_repeat_click(self):
+        router = self.make_router(already_open=True)
+        original_locate = router.controller.locator.locate.side_effect
+
+        def locate(frame, name):
+            if name == "moments_menu_selected":
+                return None
+            return original_locate(frame, name)
+
+        router.controller.locator.locate.side_effect = locate
+        with (
+            patch("wemo2_collector.controller.time.sleep"),
+            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "超时"):
+                router.run("moments_entry")
+        router.controller.driver.click.assert_called_once()
+        self.assertTrue(router.last_result.executed)
+        self.assertEqual(router.last_result.status, "failed")
+
+    def test_selected_template_identifies_page_and_rejects_unselected_or_gray(self):
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
+        with (
+            Image.open(
+                self.profile.target("dark", "moments_menu_selected").path
+            ) as selected,
+            Image.open(self.profile.target("dark", "discover_menu").path) as menu,
+            Image.open(
+                self.profile.target("dark", "discover_selected").path
+            ) as sidebar,
+            Image.new("RGB", (1100, 800), (40, 40, 40)) as image,
+        ):
+            image.paste(menu, (88, 52))
+            image.paste(sidebar, (24, 306))
+            image.save(self.frame.image_path)
+            self.assertEqual(
+                validation.detect_page(self.frame, self.profile, locator), "discover"
+            )
+            self.assertIsNone(locator.locate(self.frame, "moments_menu_selected"))
+            image.paste(selected, (91, 113))
+            image.save(self.frame.image_path)
+            self.assertEqual(
+                validation.detect_page(self.frame, self.profile, locator),
+                "moments_selected",
+            )
+            with selected.convert("L").convert("RGB") as gray:
+                image.paste(gray, (91, 113))
+            image.save(self.frame.image_path)
+            self.assertIsNone(locator.locate(self.frame, "moments_menu_selected"))
+            image.paste(selected, (91, 113))
+            image.paste(selected, (91, 400))
+            image.save(self.frame.image_path)
+            self.assertIsNone(locator.locate(self.frame, "moments_menu_selected"))
 
     def test_missing_menu_action_does_not_click(self):
         router = self.make_router(already_open=True)

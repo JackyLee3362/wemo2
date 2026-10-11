@@ -1,6 +1,7 @@
 """平台驱动契约；内部单实现组件直接使用函数或具体类。"""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from wemo2_collector.models import Direction, LocatedTarget, Screenshot, Surface
 
@@ -45,3 +46,19 @@ class BaseDriver(ABC):
     @abstractmethod
     def close(self) -> None:
         """释放采集会话，不关闭用户的微信应用。"""
+
+    def scroll(self, frame: Screenshot, target: LocatedTarget, steps: int) -> None:
+        """在目标区域向下滚动；不支持滚轮的平台需实现自己的输入方式。"""
+        raise NotImplementedError("当前平台尚未实现列表滚动")
+
+    def right_click(self, frame: Screenshot, target: LocatedTarget) -> None:
+        """打开媒体上下文菜单，由平台实现输入。"""
+        raise NotImplementedError("当前平台尚未实现右键菜单")
+
+    def save_dialog(self, directory: Path) -> Path:
+        """在已验证的同进程另存为对话框中保存唯一文件，返回实际路径。"""
+        raise NotImplementedError("当前平台尚未实现另存为")
+
+    def close_viewer(self, original: Surface) -> None:
+        """关闭本次打开的查看器并确认回到原列表窗口。"""
+        raise NotImplementedError("当前平台尚未实现返回列表")

@@ -11,9 +11,11 @@ dependencies = [
     "airtest>=1.4.3",
     "loguru>=0.7.3",
     "numpy>=1.26,<2",
+    "onnxruntime>=1.20,<2",
     "pillow>=11.2.1",
     "psutil>=7.2.2 ; sys_platform == 'win32'",
     "pydantic>=2,<3",
+    "rapidocr>=3.10,<4",
     "rich>=15.0.0",
     "typer>=0.27.3",
     "tzdata>=2026.5",
@@ -39,6 +41,10 @@ known-first-party = ["wemo2", "wemo2_collector"]
 
 [tool.uv.build-backend]
 module-name = ["wemo2", "wemo2_collector"]
+
+[tool.uv]
+# Airtest 已提供完整的 cv2；避免 OCR 的 headless 包覆盖同名模块。
+exclude-dependencies = ["opencv-python-headless"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Typer 的默认参数是框架读取的声明元数据，不是业务函数调用。

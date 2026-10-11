@@ -1,4 +1,4 @@
-# 打开发现菜单，再定位并点击朋友圈一行；保存待验证的结果截图。
+# 打开发现菜单，再点击朋友圈一行并验证绿色选中样式；已选中则跳过点击。
 collector = "windows_screenshot"
 log_file = "logs/wemo2.log"
 
@@ -12,3 +12,18 @@ theme = "dark"
 [collector_options.route]
 target = "moments_entry"
 timeout_seconds = 5
+
+[collector_options.feed]
+enabled = true
+max_screens = 20
+wheel_steps = 1
+settle_seconds = 0.6
+timeout_seconds = 2
+recognize_nickname = true
+save_media = true
+# 未指定 region 时按整窗采集；列表区域使用客户区物理像素。
+# [collector_options.feed.region]
+# x = 0
+# y = 0
+# width = 639
+# height = 663

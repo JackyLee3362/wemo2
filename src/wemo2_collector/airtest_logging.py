@@ -6,7 +6,7 @@ from loguru import logger
 
 
 class AirtestLogHandler(logging.Handler):
-    """将 Airtest 日志交给应用的 Loguru 文件 sink。"""
+    """将 Airtest 和 OCR 的标准日志交给应用的 Loguru 文件 sink。"""
 
     def emit(self, record: logging.LogRecord) -> None:
         logger.opt(exception=record.exc_info).log(record.levelname, record.getMessage())

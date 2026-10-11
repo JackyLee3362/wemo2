@@ -188,6 +188,13 @@ class UiArchitectureTests(unittest.TestCase):
         self.assertEqual(interaction.artifacts(), [])
 
     def test_unverified_intermediate_page_is_rejected_before_any_click(self):
+        self.profile.routes["load_feed"] = RouteSpec(
+            name="load_feed",
+            source="moments_selected",
+            destination="moments",
+            target="load_feed",
+            verified=False,
+        )
         self.profile.pages["later"] = PageSpec(name="later", required=["later_marker"])
         self.profile.routes["later_action"] = RouteSpec(
             name="later_action",

@@ -1,6 +1,7 @@
 """统一截图、定位、输入和等待验证的控制器。"""
 
 import time
+from collections.abc import Callable
 from math import isfinite
 from pathlib import Path
 from typing import Literal
@@ -16,6 +17,7 @@ from wemo2_collector.models import (
     Direction,
     Expectation,
     LocatedTarget,
+    Rect,
     Screenshot,
 )
 from wemo2_collector.profiles import UiProfile
@@ -145,14 +147,23 @@ class UiController:
         )
 
     def _prepare(
-        self, result: ActionResult, source_page: str | None
+        self, result: ActionResult, source_page: str | None, region: Rect | None = None
     ) -> tuple[Screenshot, LocatedTarget]:
         for attempt in range(self.config.locate_attempts):
             frame = self.capture()
             result.before = frame
             if source_page is not None and self.detect_page(frame) != source_page:
                 raise RuntimeError(f"动作前页面不再是 {source_page}，未执行点击")
-            target = self.locate(result.name, frame)
+            if region is None:
+                target = self.locate(result.name, frame)
+            else:
+                target = LocatedTarget(
+                    frame_id=frame.frame_id,
+                    name=result.name,
+                    bounds=region,
+                    score=1,
+                    method="configured_region",
+                )
             if target is not None:
                 result.target = target
                 return frame, target
@@ -162,7 +173,7 @@ class UiController:
 
     def _perform(
         self,
-        operation: Literal["click", "swipe"],
+        operation: Literal["click", "right_click", "swipe", "scroll"],
         name: str,
         expectation: Expectation | None,
         *,
@@ -172,6 +183,8 @@ class UiController:
         timeout: float | None = None,
         settle_seconds: float = 0.2,
         follow_foreground: bool = False,
+        region: Rect | None = None,
+        wheel_steps: int | None = None,
     ) -> ActionResult:
         result = ActionResult(operation=operation, name=name, expectation=expectation)
         evidence_start = len(self._artifacts)
@@ -197,7 +210,11 @@ class UiController:
             if operation == "swipe":
                 result.direction = direction
                 result.distance = distance
-            before, target = self._prepare(result, source_page)
+            if operation == "scroll":
+                if type(wheel_steps) is not int or not 1 <= wheel_steps <= 10:
+                    raise ValueError("滚轮步数必须为 1 到 10 的整数")
+                result.wheel_steps = wheel_steps
+            before, target = self._prepare(result, source_page, region)
             if expectation is not None:
                 # 先确认验证规则和区域合法，不能输入后才发现配置错误。
                 validation.evaluate(
@@ -208,6 +225,10 @@ class UiController:
             result.attempted = True
             if operation == "click":
                 self.driver.click(before, target)
+            elif operation == "right_click":
+                self.driver.right_click(before, target)
+            elif operation == "scroll":
+                self.driver.scroll(before, target, wheel_steps)
             else:
                 self.driver.swipe(before, target, direction, distance)
             result.executed = True
@@ -276,3 +297,65 @@ class UiController:
 
     def artifacts(self) -> list[Path]:
         return list(self._artifacts)
+
+    def scroll(
+        self,
+        region: Rect,
+        steps: int,
+        *,
+        settle_seconds: float = 0.6,
+        timeout: float = 2.0,
+    ) -> ActionResult:
+        """在已确认的列表范围内滚动一次，并等待该范围发生变化。"""
+        return self._perform(
+            "scroll",
+            "feed_region",
+            Expectation(kind="change", region=region),
+            region=region,
+            wheel_steps=steps,
+            timeout=timeout,
+            settle_seconds=settle_seconds,
+        )
+
+    def click_region(
+        self,
+        name: str,
+        region: Rect,
+        *,
+        right: bool = False,
+        follow_foreground: bool = False,
+    ) -> ActionResult:
+        """在当前截图中已确认的媒体/文字范围输入一次；调用者需验证内容连续性。"""
+        operation = "right_click" if right else "click"
+        return self._perform(
+            operation,
+            name,
+            None,
+            region=region,
+            follow_foreground=follow_foreground,
+            settle_seconds=0.6,
+        )
+
+    def platform_step(
+        self, operation: Literal["save_file", "close_viewer"], action: Callable
+    ) -> object:
+        """记录一次平台对话框操作，失败保留执行事实，不自动重发。"""
+        result = ActionResult(operation=operation, name=operation)
+        start = len(self._artifacts)
+        value = None
+        try:
+            result.before = self.capture(follow_foreground=True)
+            result.attempted = True
+            value = action()
+            result.executed = True
+            result.status = "executed"
+            result.after = self.capture(follow_foreground=True)
+        except Exception as error:
+            logger.exception("媒体平台步骤 {} 失败，停止后续输入：{}", operation, error)
+            result.error = str(error)
+            result.status = "failed"
+        result.evidence = self._artifacts[start:]
+        self._finish(result)
+        if result.status == "failed":
+            raise UiActionError(result)
+        return value

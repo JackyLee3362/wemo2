@@ -4,7 +4,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from wemo2_collector.models import ControllerConfig, MatchConfig, Platform, RouteConfig
+from wemo2_collector.models import (
+    ControllerConfig,
+    FeedCaptureConfig,
+    MatchConfig,
+    Platform,
+    RouteConfig,
+)
 from wemo2_collector.profiles import build_profile
 from wemo2_collector.timezones import resolve_timezone
 
@@ -24,6 +30,7 @@ class WindowsCollectorConfig(BaseModel):
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
     matcher: MatchConfig = Field(default_factory=MatchConfig)
     route: RouteConfig = Field(default_factory=RouteConfig)
+    feed: FeedCaptureConfig = Field(default_factory=FeedCaptureConfig)
 
     @field_validator("timezone")
     @classmethod

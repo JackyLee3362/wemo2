@@ -115,7 +115,9 @@ class ActionResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     action_id: str = Field(default_factory=lambda: str(uuid4()))
-    operation: Literal["click", "swipe"]
+    operation: Literal[
+        "click", "right_click", "swipe", "scroll", "save_file", "close_viewer"
+    ]
     name: str  # 语义目标名，不保存固定屏幕点击位置。
     status: Literal["executed", "verified", "pending", "failed"] = "failed"
     attempted: bool = False  # 已调用平台动作；抛错时可能部分执行，禁止自动重发。
@@ -125,7 +127,44 @@ class ActionResult(BaseModel):
     target: LocatedTarget | None = None
     direction: Direction | None = None  # swipe 的拖动方向。
     distance: int | None = Field(default=None, gt=0, strict=True)  # 物理像素距离。
+    wheel_steps: int | None = Field(default=None, ge=1, le=10, strict=True)
     evidence: list[Path] = Field(default_factory=list)  # 包含校验失败时保存的截图。
     expectation: Expectation | None = None
     validation: ValidationResult | None = None
+    error: str | None = None
+
+
+class FeedCaptureConfig(BaseModel):
+    """按锚点分段截图的设置；region 为客户区物理像素，不是屏幕坐标。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    enabled: bool = False
+    region: Rect | None = None  # 未指定时保存整窗；配置列表区域可去除侧栏和页头。
+    max_screens: int = Field(default=20, ge=1, le=100, strict=True)
+    wheel_steps: int = Field(default=1, ge=1, le=10, strict=True)
+    settle_seconds: float = Field(default=0.6, ge=0, le=10)
+    timeout_seconds: float = Field(default=2.0, gt=0, le=60)
+    boundary_padding: int = Field(default=8, ge=0, le=100, strict=True)
+    recognize_nickname: bool = True
+    save_media: bool = True
+
+
+class FeedSegment(BaseModel):
+    """相邻锚点之间的图像证据；首尾未闭合片段不冒充完整动态。"""
+
+    model_config = ConfigDict(extra="forbid")
+    image_path: Path
+    source_frames: list[str]
+    partial_start: bool
+    partial_end: bool
+    end_anchor: LocatedTarget | None = None
+
+
+class FeedCaptureResult(BaseModel):
+    """一次有上限的滚动采集清单；停止不意味着已确认历史记录到底。"""
+
+    model_config = ConfigDict(extra="forbid")
+    frames: list[Screenshot] = Field(default_factory=list)
+    segments: list[FeedSegment] = Field(default_factory=list)
+    stop_reason: str = "running"
     error: str | None = None

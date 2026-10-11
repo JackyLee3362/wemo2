@@ -4,6 +4,8 @@ import ctypes
 import sys
 import time
 from ctypes import wintypes
+from pathlib import Path
+from uuid import uuid4
 
 from loguru import logger
 
@@ -253,3 +255,99 @@ class WindowsDriver(BaseDriver):
             if self.previous_dpi is not None:
                 self.user32.SetThreadDpiAwarenessContext(self.previous_dpi)
                 self.previous_dpi = None
+
+    def scroll(self, frame: Screenshot, target: LocatedTarget, steps: int) -> None:
+        """复用 Airtest Windows 的鼠标后端，向下滚动而不拖动内容或点击菜单。"""
+        self._validate_target(frame, target)
+        if type(steps) is not int or not 1 <= steps <= 10:
+            raise ValueError("滚轮步数必须为 1 到 10 的整数")
+        bounds = target.bounds
+        # 鼠标位于已确认的列表区域中，不点击动态菜单锚点。
+        x = frame.surface.bounds.x + bounds.x + bounds.width // 2
+        y = frame.surface.bounds.y + bounds.y + bounds.height // 2
+        self.device.mouse.scroll(coords=(x, y), wheel_dist=-steps)
+
+    def right_click(self, frame: Screenshot, target: LocatedTarget) -> None:
+        self._validate_target(frame, target)
+        bounds = target.bounds
+        self.device.mouse.right_click(
+            coords=(
+                frame.surface.bounds.x + bounds.x + bounds.width // 2,
+                frame.surface.bounds.y + bounds.y + bounds.height // 2,
+            )
+        )
+
+    def save_dialog(self, directory: Path) -> Path:
+        """仅处理同进程标准另存为对话框；不猜测无法识别的文件输入框。"""
+        from pywinauto import Desktop
+
+        self.verify_capture(self.current_surface())
+        dialog = (
+            Desktop(backend="win32").window(handle=self.device.handle).wrapper_object()
+        )
+        if dialog.class_name() != "#32770" or not any(
+            word in dialog.window_text() for word in ("另存为", "保存", "Save")
+        ):
+            raise RuntimeError("未识别到标准另存为对话框，未输入文件名")
+        edits = []
+        for edit in dialog.descendants(class_name="Edit"):
+            if edit.is_visible() and edit.is_enabled():
+                edits.append(edit)
+        if len(edits) != 1:
+            raise RuntimeError("无法唯一识别文件名输入框，请提供另存为对话框截图")
+        directory.mkdir(parents=True, exist_ok=True)
+        prefix = f"asset_{uuid4()}"
+        destination = (directory / prefix).resolve()
+        # 标准对话框按所选文件类型补扩展名；唯一名称避免覆盖已有文件。
+        edits[0].set_edit_text(str(destination))
+        process = wintypes.DWORD()
+        if not self.user32.GetWindowThreadProcessId(
+            self.device.handle, ctypes.byref(process)
+        ):
+            raise RuntimeError("无法校验另存为窗口进程")
+        dialog_handle = self.device.handle
+        self.device.keyevent("{ENTER}")
+        last_size = None
+        for _ in range(150):
+            files = list(directory.glob(prefix + "*"))
+            if len(files) == 1 and files[0].is_file():
+                size = files[0].stat().st_size
+                foreground = self.user32.GetForegroundWindow()
+                if size > 0 and size == last_size and foreground != dialog_handle:
+                    active_process = wintypes.DWORD()
+                    if (
+                        not self.user32.GetWindowThreadProcessId(
+                            foreground, ctypes.byref(active_process)
+                        )
+                        or active_process.value != process.value
+                    ):
+                        raise RuntimeError("保存后前台窗口不属于原微信进程")
+                    from wemo2_collector.windows.backend import create_device
+
+                    old = self.device
+                    self.device = create_device(handle=foreground, foreground=False)
+                    old.screen.close()
+                    return files[0].resolve()
+                last_size = size
+            time.sleep(0.2)
+        raise RuntimeError("另存为后未观察到稳定的非空文件，未标记保存成功")
+
+    def close_viewer(self, original: Surface) -> None:
+        """只在独立查看器窗口按一次 Escape，避免关闭主微信窗口。"""
+        from wemo2_collector.windows.backend import create_device
+
+        self.verify_capture(self.current_surface())
+        if str(self.device.handle) == original.surface_id:
+            raise RuntimeError("媒体查看器未打开独立窗口，不能安全自动返回")
+        self.device.keyevent("{ESC}")
+        for _ in range(20):
+            if self.user32.GetForegroundWindow() == int(original.surface_id):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("关闭查看器后未回到原列表窗口，停止采集")
+        old = self.device
+        self.device = create_device(handle=int(original.surface_id), foreground=False)
+        old.screen.close()
+        if self.current_surface() != original:
+            raise RuntimeError("返回列表后窗口位置或大小已变化")

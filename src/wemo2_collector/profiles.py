@@ -35,6 +35,7 @@ class TemplateSpec(BaseModel):
     path: Path
     reference_scale: float = Field(default=1.25, gt=0)
     region_ratio: float = Field(default=0.1, gt=0, le=1)
+    rgb: bool = False  # 选中样式需同时校验颜色；普通图标默认按灰度匹配。
 
 
 class UiProfile(BaseModel):
@@ -112,10 +113,18 @@ def build_profile() -> UiProfile:
     return UiProfile(
         pages={
             "home": PageSpec(
-                name="home", required=["moments_entry"], forbidden=["discover_selected"]
+                name="home",
+                required=["moments_entry"],
+                forbidden=["discover_selected", "moments_menu_selected"],
             ),
             "discover": PageSpec(
-                name="discover", required=["discover_selected", "discover_menu"]
+                name="discover",
+                required=["discover_selected", "discover_menu"],
+                forbidden=["moments_menu_selected"],
+            ),
+            # 菜单选中与动态列表加载是两个独立状态。
+            "moments_selected": PageSpec(
+                name="moments_selected", required=["moments_menu_selected"]
             ),
             "moments": PageSpec(name="moments"),
         },
@@ -129,9 +138,8 @@ def build_profile() -> UiProfile:
             "moments_entry": RouteSpec(
                 name="moments_entry",
                 source="discover",
-                destination="moments",
+                destination="moments_selected",
                 target="moments_menu",
-                verified=False,
                 follow_foreground=True,
                 settle_seconds=0.5,
             ),
@@ -147,6 +155,14 @@ def build_profile() -> UiProfile:
                 ),
                 "moments_menu": TemplateSpec(
                     path=assets / "moments_menu.png", region_ratio=0.4
+                ),
+                "moments_menu_selected": TemplateSpec(
+                    path=assets / "moments_menu_selected.png",
+                    region_ratio=0.6,
+                    rgb=True,
+                ),
+                "moments_anchor": TemplateSpec(
+                    path=assets / "moments_anchor.png", region_ratio=1.0
                 ),
             }
         },

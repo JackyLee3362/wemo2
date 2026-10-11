@@ -1,5 +1,6 @@
 """滚动采集及相邻截图拼接；以菜单锚点切分图像，不解析微信源身份。"""
 
+from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,7 +19,9 @@ from wemo2_collector.models import (
 )
 
 
-def overlap_shift(before: Image.Image, after: Image.Image) -> int | None:
+def overlap_shift(
+    before: Image.Image, after: Image.Image, static_width: int | None = None
+) -> int | None:
     """通过 Airtest 确认旧视口底部仍在新视口内；匹配不唯一时拒绝拼接。"""
     import numpy as np
     from airtest.aircv.template_matching import TemplateMatching
@@ -26,13 +29,15 @@ def overlap_shift(before: Image.Image, after: Image.Image) -> int | None:
     if before.size != after.size:
         return None
     height = before.height
-    source = np.array(after.convert("RGB"))[:, :, ::-1].copy()
+    width = before.width if static_width is None else min(before.width, static_width)
+    with after.crop((0, 0, width, height)) as area:
+        source = np.array(area.convert("RGB"))[:, :, ::-1].copy()
     shift = None
     best_score = 0.0
     # 底部新露出的图片可能仍在加载；中部提供独立证据，两个命中必须一致。
     for start in (height * 2 // 3, height // 3):
         end = min(height, start + height - height * 2 // 3)
-        with before.crop((0, start, before.width, end)) as strip:
+        with before.crop((0, start, width, end)) as strip:
             search = np.array(strip.convert("RGB"))[:, :, ::-1].copy()
         if search.std() < 1:
             continue
@@ -68,6 +73,7 @@ class FeedCapture:
         config: FeedCaptureConfig,
         directory: Path,
         media: MediaCapture | None = None,
+        on_progress: Callable[[FeedCaptureResult, MediaCapture], None] | None = None,
     ):
         self.controller = controller
         self.config = config
@@ -78,6 +84,7 @@ class FeedCapture:
         self.pending_frames: list[str] = []
         self.partial_start = True
         self.media = media
+        self.on_progress = on_progress
         self.stream_height = 0
         self.segment_offset = 0
 
@@ -160,6 +167,9 @@ class FeedCapture:
             frame.surface
         )
         previous = None
+        static_region = self.controller.profile.feed_static_bounds(
+            region, first.surface.scale
+        )
         try:
             for index in range(self.config.max_screens):
                 if frame.surface != first.surface:
@@ -172,7 +182,7 @@ class FeedCapture:
                 if previous is None:
                     shift = image.height
                 else:
-                    shift = overlap_shift(previous, image)
+                    shift = overlap_shift(previous, image, static_region.width)
                     previous.close()
                 previous = image
                 if shift is None:
@@ -187,10 +197,14 @@ class FeedCapture:
                 ):
                     self.result.stop_reason = "anchor_missing"
                     break
-                if self.media is not None:
-                    self.media.process(
-                        frame, region, anchors, self.stream_height - image.height
-                    )
+                try:
+                    if self.media is not None:
+                        self.media.process(
+                            frame, region, anchors, self.stream_height - image.height
+                        )
+                finally:
+                    if self.media is not None and self.on_progress is not None:
+                        self.on_progress(self.result, self.media)
                 if index + 1 == self.config.max_screens:
                     self.result.stop_reason = "max_screens"
                     break
@@ -201,6 +215,8 @@ class FeedCapture:
                     timeout=self.config.timeout_seconds,
                 )
                 if action.status != "verified":
+                    if action.after is not None:
+                        self.result.frames.append(action.after)
                     if (
                         action.executed
                         and action.after is not None
@@ -211,7 +227,6 @@ class FeedCapture:
                         and action.error.startswith("动作后验证超时")
                     ):
                         self.result.stop_reason = "no_progress"
-                        self.result.frames.append(action.after)
                         break
                     raise UiActionError(action)
                 if action.after is None:

@@ -297,7 +297,7 @@ Windows `swipe` 是区域内鼠标拖动；朋友圈翻页使用独立的滚轮 
 [collector_options.feed]
 enabled = true
 max_screens = 20
-wheel_steps = 1
+wheel_steps = 3
 settle_seconds = 0.6
 timeout_seconds = 2
 recognize_nickname = true
@@ -322,7 +322,7 @@ height = 663
 - `feed_<UUID>/segment_*.png` 是按“··”锚点切分的图像；`manifest.json` 记录来源帧、昵称、完整度和停止原因。
 - `cards_<UUID>/card_*.png/json` 记录当前可见卡片、OCR 昵称和实际媒体文件；`media/asset_*` 保存查看器另存为的文件。
 
-每次只向下滚动一个滚轮步长，等连续两帧稳定后，使用 Airtest 验证相邻视口的内容重叠，再拼接和切分。
+每次向下滚动三个滚轮步长，在列表左侧空隙输入，等头像侧栏连续两帧稳定后，使用 Airtest 验证相邻视口的内容重叠，再拼接和切分。
 无法验证重叠、未知页面且首次未找到锚点、没有滚动进展或达到上限即停止，原始截图仍保留。
 已确认朋友圈菜单选中时，允许从没有锚点的封面首屏继续滚动寻找第一条动态。
 `no_progress` 不等于已确认到底；首尾未闭合片段使用 `partial_start/partial_end` 标记。
@@ -369,8 +369,10 @@ Windows 实机调试的任务拆分、修复原因、验证结果和证据路径
 
 在 `[collector_options]` 中配置 `resource_dir = "data/moments"` 和 `account = "default"`。
 相对资源路径以配置文件所在目录为基准；将 account 改为本次备份账号。
-开启朋友圈采集后，输出为 `资源目录/账号/日期/朋友圈/post.json`、`screenshot.png` 和 `media/`。
+开启朋友圈采集后，输出为 `资源目录/账号/YYYY-MM-DD/朋友圈哈希/post.json`、`screenshot.png` 和 `media/`。
 JSON 保存粗略日期、时间原文、人物、文案、截图和所有已关联的下载图片/视频。
 同账号按人物和完整文案合并；媒体按文件哈希去重，历次截图保留供核对。
 识别不完整的记录单独留痕，无法识别日期时使用 unknown_date。
 完整字段、目录结构与去重边界见 [朋友圈资源协议](doc/moment-resources.md)。
+
+视频/图片打开后默认等待 5 秒再检查加载提示，最多等待 30 秒；配置项为 `[collector_options.feed]` 下的 `media_load_wait_seconds`、`media_load_timeout_seconds`。加载超时不右键、不自动重发输入。Windows 另存为使用标准文件名输入框（控件 ID 1001）和保存按钮（控件 ID 1），与系统配色无关。完整朋友圈每完成一条就归档；跨屏未闭合片段在停止时保存。

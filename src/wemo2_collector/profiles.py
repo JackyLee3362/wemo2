@@ -76,7 +76,7 @@ class MediaStepSpec(BaseModel):
     """媒体单步的动作、前置状态、后置验证和唯一后继；失败始终停止并留证。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    action: Literal["click", "right_click", "save_file", "close_viewer"]
+    action: Literal["click", "right_click", "wait_ready", "save_file", "close_viewer"]
     target: str | None = None
     before: Literal["original", "viewer", "menu", "save_dialog"]
     expect: Literal["viewer", "menu", "save_dialog", "file", "original"]
@@ -129,6 +129,9 @@ class MediaWorkflowSpec(BaseModel):
                     or step.target is not None
                 ):
                     raise ValueError("保存步骤必须从对话框验证文件，不使用点击目标")
+            elif step.action == "wait_ready":
+                if step.before != "viewer" or step.expect != "viewer" or step.target:
+                    raise ValueError("加载等待只观察查看器，不执行输入或改变页面")
             elif (
                 step.before != "viewer"
                 or step.expect != "original"
@@ -158,6 +161,7 @@ class UiProfile(BaseModel):
     media_targets: dict[str, MediaTargetSpec] = Field(default_factory=dict)
     media_workflows: dict[str, MediaWorkflowSpec] = Field(default_factory=dict)
     feed_insets: tuple[int, int, int, int] = (375, 40, 6, 9)
+    feed_static_width: int = Field(default=90, gt=0)
     layout_scale: float = Field(default=1.25, gt=0)
 
     @model_validator(mode="after")
@@ -221,6 +225,14 @@ class UiProfile(BaseModel):
         if width <= 0 or height <= 0:
             raise ValueError("窗口太小，无法按页面布局定位朋友圈列表")
         return Rect(x=left, y=top, width=width, height=height)
+
+    def feed_static_bounds(self, region: Rect, scale: float) -> Rect:
+        """头像侧栏用于滚动进展与布局稳定校验，排除正文中的视频播放区域。"""
+        width = min(
+            region.width,
+            max(1, round(self.feed_static_width * scale / self.layout_scale)),
+        )
+        return Rect(x=region.x, y=region.y, width=width, height=region.height)
 
     def media_target(self, name: str) -> MediaTargetSpec:
         if name not in self.media_targets:
@@ -359,7 +371,14 @@ def build_profile() -> UiProfile:
                         target="media_preview",
                         before="original",
                         expect="viewer",
+                        next="wait_ready",
+                    ),
+                    "wait_ready": MediaStepSpec(
+                        action="wait_ready",
+                        before="viewer",
+                        expect="viewer",
                         next="open_menu",
+                        timeout_seconds=30,
                     ),
                     "open_menu": MediaStepSpec(
                         action="right_click",

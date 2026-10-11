@@ -154,6 +154,39 @@ class MomentArchiveTests(unittest.TestCase):
         self.assertEqual(updated.first_seen_at, old.first_seen_at)
         self.assertEqual(updated.last_seen_at, self.frame.captured_at)
 
+    def test_default_account_and_iso_date_use_configured_resource_root(self):
+        config = WindowsCollectorConfig(resource_dir=self.root)
+        self.details.approximate_date = date(2026, 10, 11)
+        archive = MomentArchive(config.resource_dir, config.account)
+        archive.export(self.result, self.media)
+        path, record = self.record("default")
+        key = moment_key(self.details.person, self.details.text, "complete")
+        self.assertEqual(path, self.root / "default" / "2026-10-11" / key / "post.json")
+        self.assertTrue((path.parent / record.media[0].path).is_file())
+
+    def test_compact_date_directory_migrates_without_duplicate_metadata_or_lost_media(
+        self,
+    ):
+        self.export()
+        path, record = self.record()
+        old = path.parent.parent.with_name("20261010") / path.parent.name
+        old.parent.mkdir()
+        path.parent.rename(old)
+        self.export()
+        new, updated = self.record()
+        self.assertEqual(new.parent.parent.name, "2026-10-10")
+        self.assertFalse(old.exists())
+        self.assertEqual(updated.media, record.media)
+        self.assertTrue((new.parent / updated.media[0].path).is_file())
+
+    def test_incremental_export_does_not_create_duplicate_unidentified_folders(self):
+        self.details.person = None
+        archive = MomentArchive(self.root, "default")
+        archive.export(self.result, self.media)
+        archive.export(self.result, self.media)
+        self.record("default")
+        self.media.reader.post_details.assert_called_once()
+
     def test_accounts_do_not_share_dedup_or_resources(self):
         self.export("账号A")
         self.export("账号B")

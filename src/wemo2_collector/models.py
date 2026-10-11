@@ -119,7 +119,13 @@ class ActionResult(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
     action_id: str = Field(default_factory=lambda: str(uuid4()))
     operation: Literal[
-        "click", "right_click", "swipe", "scroll", "save_file", "close_viewer"
+        "click",
+        "right_click",
+        "swipe",
+        "scroll",
+        "wait_ready",
+        "save_file",
+        "close_viewer",
     ]
     name: str  # 语义目标名，不保存固定屏幕点击位置。
     workflow: str | None = None  # 媒体流程注册名；name 为该流程中的步骤名。
@@ -145,13 +151,22 @@ class FeedCaptureConfig(BaseModel):
     enabled: bool = False
     region: Rect | None = None  # 未指定时使用 UiProfile 和 DPI 推算列表区域。
     max_screens: int = Field(default=20, ge=1, le=100, strict=True)
-    wheel_steps: int = Field(default=1, ge=1, le=10, strict=True)
+    wheel_steps: int = Field(default=3, ge=1, le=10, strict=True)
     settle_seconds: float = Field(default=0.6, ge=0, le=10)
     timeout_seconds: float = Field(default=2.0, gt=0, le=60)
     boundary_padding: int = Field(default=8, ge=0, le=100, strict=True)
     recognize_nickname: bool = True
     save_media: bool = True
     media_workflow: str = Field(default="save_media", min_length=1)
+    media_load_wait_seconds: float = Field(default=5, ge=0, le=30)
+    media_load_timeout_seconds: float = Field(default=30, gt=0, le=60)
+
+    @model_validator(mode="after")
+    def check_media_wait(self):
+        """加载的最短等待不得超过总超时，否则不会有机会校验就绪。"""
+        if self.media_load_wait_seconds >= self.media_load_timeout_seconds:
+            raise ValueError("媒体加载等待必须小于加载超时")
+        return self
 
 
 class FeedSegment(BaseModel):

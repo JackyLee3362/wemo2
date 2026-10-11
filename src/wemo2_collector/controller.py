@@ -233,6 +233,13 @@ class UiController:
                     raise ValueError("滚轮步数必须为 1 到 10 的整数")
                 result.wheel_steps = wheel_steps
             before, target = self._prepare(result, source_page, region, locate_target)
+            if operation == "scroll" and region is not None:
+                static_region = self.profile.feed_static_bounds(
+                    region, before.surface.scale
+                )
+                expectation = Expectation(kind="change", region=static_region)
+                result.expectation = expectation
+                stable_region = static_region
             if expectation is not None:
                 # 先确认验证规则和区域合法，不能输入后才发现配置错误。
                 validation.evaluate(
@@ -333,7 +340,7 @@ class UiController:
         settle_seconds: float = 0.6,
         timeout: float = 2.0,
     ) -> ActionResult:
-        """滚动一次，先验证列表变化，再等待连续两帧稳定，避免使用动画中的坐标。"""
+        """滚动一次，只观察头像侧栏的移动和稳定，视频播放不计作滚动进展。"""
         return self._perform(
             "scroll",
             "feed_region",
@@ -499,6 +506,8 @@ class UiController:
         on_file: Callable[[Path], None],
         *,
         workflow_name: str = "save_media",
+        load_wait_seconds: float = 5,
+        load_timeout_seconds: float = 30,
     ) -> Path:
         """执行已校验的媒体步骤图；每次输入仅执行一次，验证失败即停止并留证。"""
         self.profile.validate_structure()
@@ -591,6 +600,54 @@ class UiController:
                     workflow_name=workflow_name,
                     settle_seconds=step.settle_seconds,
                 )
+            elif step.action == "wait_ready":
+                result = ActionResult(
+                    operation="wait_ready", name=name, workflow=workflow_name
+                )
+                start = len(self._artifacts)
+                try:
+                    result.before = self.capture(follow_foreground=True)
+                    before(result.before)
+                    time.sleep(load_wait_seconds)
+
+                    def ready(frame: Screenshot) -> ValidationResult:
+                        checked = verify(frame)
+                        if checked.status != "passed":
+                            return checked
+                        with Image.open(frame.image_path) as image:
+                            lines = reader.read(image)
+                        for line in lines:
+                            text = line.text.replace(" ", "").lower()
+                            if any(
+                                word in text
+                                for word in (
+                                    "加载中",
+                                    "正在加载",
+                                    "下载中",
+                                    "正在下载",
+                                    "loading",
+                                    "downloading",
+                                )
+                            ):
+                                return ValidationResult(
+                                    status="not_met",
+                                    message="媒体仍在加载，继续等待；尚未右键",
+                                )
+                        return ValidationResult(
+                            status="passed", message="媒体已等待加载，未观察到加载提示"
+                        )
+
+                    self._observe(
+                        result, load_timeout_seconds - load_wait_seconds, True, ready
+                    )
+                except Exception as error:
+                    logger.exception("媒体加载等待失败，停止后续右键和保存：{}", error)
+                    result.status = "failed"
+                    result.error = str(error)
+                result.evidence = self._artifacts[start:]
+                self._finish(result)
+                if result.status != "verified":
+                    raise UiActionError(result)
             else:
 
                 def close_viewer() -> None:

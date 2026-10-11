@@ -131,6 +131,8 @@ class MediaCapture:
             self.reader,
             on_file,
             workflow_name=self.config.media_workflow,
+            load_wait_seconds=self.config.media_load_wait_seconds,
+            load_timeout_seconds=self.config.media_load_timeout_seconds,
         )
         if saved is None:
             raise RuntimeError("媒体流程未交付验证过的文件")

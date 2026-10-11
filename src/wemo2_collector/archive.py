@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 import unicodedata
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -37,6 +38,7 @@ class MomentArchive:
         self.account_dir = resource_dir / account
         self.account = account
         self.paths: list[Path] = []
+        self.exported: set[Path] = set()
 
     def export(self, result: FeedCaptureResult, media: MediaCapture) -> None:
         """关联同一列表流中的截图与媒体；失败也保留已完成的截图及已验证文件。"""
@@ -44,6 +46,8 @@ class MomentArchive:
         for frame in result.frames:
             frames[frame.frame_id] = frame
         for segment in result.segments:
+            if segment.image_path in self.exported:
+                continue
             try:
                 source = frames[segment.source_frames[0]]
                 with Image.open(segment.image_path) as image:
@@ -62,6 +66,7 @@ class MomentArchive:
                         self._save(
                             segment, source, details, cropped, media, result.error
                         )
+                self.exported.add(segment.image_path)
             except Exception as error:
                 logger.exception(
                     "朋友圈资源归档失败，保留原始采集文件并停止归档：{}，{}",
@@ -83,7 +88,15 @@ class MomentArchive:
                 raise RuntimeError("同账号存在多个相同去重键的文件夹，请先检查归档目录")
             if matches:
                 folder = matches[0].parent
-                if folder.parent.name == "unknown_date" and day != "unknown_date":
+                migrate_unknown = (
+                    folder.parent.name == "unknown_date" and day != "unknown_date"
+                )
+                migrate_compact_day = (
+                    len(folder.parent.name) == 8 and folder.parent.name.isdigit()
+                )
+                if migrate_unknown or migrate_compact_day:
+                    if migrate_compact_day:
+                        day = date.fromisoformat(folder.parent.name).isoformat()
                     destination = self.account_dir / day / identifier
                     root = self.account_dir.resolve()
                     if not folder.resolve().is_relative_to(
@@ -111,6 +124,7 @@ class MomentArchive:
         key = moment_key(details.person, details.text, details.text_status)
         folder = self._folder(key, details)
         folder.mkdir(parents=True, exist_ok=True)
+        logger.info("朋友圈资源归档目录：{}", folder.resolve())
         metadata = folder / "post.json"
         complete = details.header_top is not None and not segment.partial_end
         if metadata.is_file():

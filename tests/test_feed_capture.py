@@ -50,6 +50,7 @@ class FeedCaptureTests(unittest.TestCase):
         self.first = self.frame("first", self.pixels[:300])
         self.second = self.frame("second", self.pixels[100:400])
         self.controller = MagicMock()
+        self.controller.profile = build_profile()
         self.controller.locator.locate_all.side_effect = [
             [self.anchor(self.first, 70), self.anchor(self.first, 220)],
             [self.anchor(self.second, 120), self.anchor(self.second, 250)],
@@ -127,6 +128,35 @@ class FeedCaptureTests(unittest.TestCase):
             (scan.directory / "manifest.json").read_text(encoding="utf-8")
         )
         self.assertEqual(len(manifest["frames"]), 2)
+
+    def test_video_playback_does_not_break_static_sidebar_overlap(self):
+        changed = self.pixels[100:400].copy()
+        changed[:, 90:] = np.random.default_rng(91).integers(
+            20, 220, (300, 110, 3), dtype=np.uint8
+        )
+        with (
+            Image.fromarray(self.pixels[:300]) as before,
+            Image.fromarray(changed) as after,
+        ):
+            self.assertEqual(overlap_shift(before, after, static_width=90), 100)
+            self.assertIsNone(overlap_shift(before, after))
+
+    def test_completed_segments_are_archived_before_next_scroll(self):
+        scan = self.scanner(boundary_padding=0)
+        scan.media = MagicMock()
+        scan.config = scan.config.model_copy(update={"max_screens": 1})
+        scan.media.reader.nickname.return_value = None
+        observed = []
+
+        def archive(result, media):
+            media.process.assert_called_once()
+            self.controller.scroll.assert_not_called()
+            observed.extend(result.segments)
+
+        scan.on_progress = archive
+        scan.run(self.first)
+        self.assertEqual(len(observed), 2)
+        self.assertTrue(all(not segment.partial_end for segment in observed))
 
     def test_overlap_can_use_middle_strip_when_bottom_media_finishes_loading(self):
         changed = self.pixels[30:330].copy()
@@ -299,7 +329,7 @@ class FeedCaptureTests(unittest.TestCase):
         with patch.object(driver, "verify_capture"):
             driver.scroll(self.first, target, 1)
         driver.device.mouse.scroll.assert_called_once_with(
-            coords=(180, 102), wheel_dist=-1
+            coords=(168, 102), wheel_dist=-1
         )
         driver.device.swipe.assert_not_called()
 
@@ -351,6 +381,48 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(screenshotter.capture.call_count, 4)
         driver.scroll.assert_called_once()
         self.assertEqual(len(controller.results), 1)
+
+    def test_playing_video_cannot_prevent_layout_stability_after_scroll(self):
+        changed = self.pixels[100:400].copy()
+        changed[:, 90:] = 210
+        playing = self.frame("playing", changed)
+        driver = MagicMock()
+        driver.prepare_capture.return_value = self.surface
+        screenshotter = MagicMock()
+        screenshotter.capture.side_effect = [self.first, self.second, playing]
+        controller = UiController(driver, screenshotter, MagicMock(), build_profile())
+        with patch("wemo2_collector.controller.time.sleep"):
+            result = controller.scroll(Rect(x=0, y=0, width=200, height=300), 3)
+        self.assertEqual(result.status, "verified")
+        self.assertEqual(result.after, playing)
+        driver.scroll.assert_called_once()
+
+    def test_only_video_motion_is_not_scroll_progress(self):
+        changed = self.pixels[:300].copy()
+        changed[:, 90:] = 210
+        playing = self.frame("playing", changed)
+        driver = MagicMock()
+        driver.prepare_capture.return_value = self.surface
+        screenshotter = MagicMock()
+        screenshotter.capture.side_effect = [self.first, playing]
+        controller = UiController(driver, screenshotter, MagicMock(), build_profile())
+        with (
+            patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 3]),
+            patch("wemo2_collector.controller.time.sleep"),
+        ):
+            result = controller.scroll(Rect(x=0, y=0, width=200, height=300), 3)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.validation.change_ratio, 0)
+        self.assertEqual(result.after, playing)
+        driver.scroll.assert_called_once()
+
+    def test_failed_stability_retains_last_raw_frame_in_manifest(self):
+        self.controller.scroll.return_value.status = "failed"
+        self.controller.scroll.return_value.error = "布局稳定等待超时"
+        scan = self.scanner()
+        with self.assertRaisesRegex(RuntimeError, "布局稳定等待超时"):
+            scan.run(self.first)
+        self.assertEqual(scan.result.frames, [self.first, self.second])
 
     def test_media_input_failure_saves_card_metadata_before_propagating(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
@@ -512,7 +584,13 @@ class FeedCaptureTests(unittest.TestCase):
         driver.is_save_dialog.side_effect = lambda: state["page"] == "dialog"
         driver.current_surface.side_effect = lambda: frames[state["page"]].surface
         controller.locator.is_enlarged_preview.return_value = embedded
-        media = MediaCapture(controller, FeedCaptureConfig(), self.path)
+        media = MediaCapture(
+            controller,
+            FeedCaptureConfig(
+                media_load_wait_seconds=0, media_load_timeout_seconds=0.01
+            ),
+            self.path,
+        )
         media.reader = MagicMock()
         media.reader.read.return_value = [
             TextLine(
@@ -589,6 +667,7 @@ class FeedCaptureTests(unittest.TestCase):
             [result.name for result in media.controller.results],
             [
                 "open_viewer",
+                "wait_ready",
                 "open_menu",
                 "choose_save_as",
                 "write_file",
@@ -598,6 +677,46 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertTrue(
             all(result.status == "verified" for result in media.controller.results)
         )
+
+    def test_media_waits_while_loading_before_right_click(self):
+        media = self.make_media_capture()
+        calls = 0
+        menu = TextLine(
+            text="另存为", score=0.99, bounds=Rect(x=10, y=20, width=70, height=20)
+        )
+        loading = menu.model_copy(update={"text": "加载中"})
+
+        def read(image):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                media.controller.driver.right_click.assert_not_called()
+                return [loading]
+            return [menu]
+
+        media.reader.read.side_effect = read
+        media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        wait = media.controller.results[1]
+        self.assertEqual(wait.operation, "wait_ready")
+        self.assertEqual(wait.status, "verified")
+        self.assertFalse(wait.attempted)
+        self.assertFalse(wait.executed)
+        media.controller.driver.right_click.assert_called_once()
+
+    def test_loading_timeout_prevents_right_click_and_save(self):
+        media = self.make_media_capture()
+        media.reader.read.return_value = [
+            TextLine(
+                text="正在加载",
+                score=0.99,
+                bounds=Rect(x=10, y=20, width=70, height=20),
+            )
+        ]
+        with self.assertRaisesRegex(RuntimeError, "媒体仍在加载"):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        media.controller.driver.right_click.assert_not_called()
+        media.controller.driver.save_dialog.assert_not_called()
+        self.assertEqual(media.controller.results[-1].operation, "wait_ready")
 
     def test_changed_media_content_cannot_be_clicked(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
@@ -709,12 +828,16 @@ class FeedCaptureTests(unittest.TestCase):
         toolbar.class_name.return_value = "ToolbarWindow32"
         toolbar.control_id.return_value = 1001
         dialog.descendants.return_value = [toolbar, search, edit]
+        button = MagicMock()
+        button.class_name.return_value = "Button"
+        button.control_id.return_value = 1
+        dialog.descendants.return_value.append(button)
 
-        def save(key):
+        def save():
             destination = Path(edit.set_edit_text.call_args.args[0]).with_suffix(".png")
             destination.write_bytes(self.first.image_path.read_bytes())
 
-        driver.device.keyevent.side_effect = save
+        button.click.side_effect = save
         old_device = driver.device
         with (
             patch.object(driver, "verify_capture"),
@@ -732,7 +855,8 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertTrue(path.name.startswith("asset_"))
         search.set_edit_text.assert_not_called()
         toolbar.set_edit_text.assert_not_called()
-        old_device.keyevent.assert_called_once_with("{ENTER}")
+        old_device.keyevent.assert_not_called()
+        button.click.assert_called_once()
         old_device.screen.close.assert_called_once()
         create.assert_called_once_with(handle=456, foreground=False)
 

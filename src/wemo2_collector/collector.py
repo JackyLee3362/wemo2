@@ -60,19 +60,24 @@ class WindowsScreenshotCollector(BaseCollector):
                     self.media = MediaCapture(
                         self.controller, self.config.feed, self.config.screenshot_dir
                     )
+                    self.archive = MomentArchive(
+                        self.config.resource_dir, self.config.account
+                    )
                 self.feed = FeedCapture(
                     self.controller,
                     self.config.feed,
                     self.config.screenshot_dir,
                     self.media,
+                    None if self.archive is None else self.archive.export,
                 )
                 try:
                     self.feed.run(frame)
                 finally:
-                    if self.media is not None and self.feed.result.segments:
-                        self.archive = MomentArchive(
-                            self.config.resource_dir, self.config.account
-                        )
+                    if (
+                        self.media is not None
+                        and self.archive is not None
+                        and self.feed.result.segments
+                    ):
                         self.archive.export(self.feed.result, self.media)
             return []  # 当前只交付界面证据，尚未识别朋友圈动态。
         finally:

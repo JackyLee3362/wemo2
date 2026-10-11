@@ -273,8 +273,8 @@ class WindowsDriver(BaseDriver):
         if type(steps) is not int or not 1 <= steps <= 10:
             raise ValueError("滚轮步数必须为 1 到 10 的整数")
         bounds = target.bounds
-        # 鼠标位于已确认的列表区域中，不点击动态菜单锚点。
-        x = frame.surface.bounds.x + bounds.x + bounds.width // 2
+        # 左侧空隙仍属于列表，避开可能拦截滚轮的图片、视频及菜单。
+        x = frame.surface.bounds.x + bounds.x + min(8, bounds.width // 2)
         y = frame.surface.bounds.y + bounds.y + bounds.height // 2
         self.device.mouse.scroll(coords=(x, y), wheel_dist=-steps)
 
@@ -298,12 +298,11 @@ class WindowsDriver(BaseDriver):
         )
         if not self.is_save_dialog():
             raise RuntimeError("未识别到标准另存为对话框，未输入文件名")
-        edits = []
         filename_edits = []
-        for edit in dialog.descendants(class_name="Edit"):
+        save_buttons = []
+        for edit in dialog.descendants():
             # Win32 descendants 的 class_name 参数不会过滤子控件，必须核对实际类。
             if edit.class_name() == "Edit" and edit.is_visible() and edit.is_enabled():
-                edits.append(edit)
                 logger.debug(
                     "另存为输入框：control_id={}，parent_id={}",
                     edit.control_id(),
@@ -311,22 +310,29 @@ class WindowsDriver(BaseDriver):
                 )
                 if edit.control_id() == 1001:
                     filename_edits.append(edit)
-        if filename_edits:
-            edits = filename_edits
-        if len(edits) != 1:
-            raise RuntimeError("无法唯一识别文件名输入框，请提供另存为对话框截图")
+            elif (
+                edit.class_name() == "Button"
+                and edit.control_id() == 1
+                and edit.is_visible()
+            ):
+                save_buttons.append(edit)
+        if len(filename_edits) != 1 or len(save_buttons) != 1:
+            raise RuntimeError("无法唯一识别标准文件名输入框或保存按钮，未输入")
         directory.mkdir(parents=True, exist_ok=True)
         prefix = f"asset_{uuid4()}"
         destination = (directory / prefix).resolve()
         # 标准对话框按所选文件类型补扩展名；唯一名称避免覆盖已有文件。
-        edits[0].set_edit_text(str(destination))
+        filename_edits[0].set_edit_text(str(destination))
         process = wintypes.DWORD()
         if not self.user32.GetWindowThreadProcessId(
             self.device.handle, ctypes.byref(process)
         ):
             raise RuntimeError("无法校验另存为窗口进程")
         dialog_handle = self.device.handle
-        self.device.keyevent("{ENTER}")
+        if not save_buttons[0].is_enabled():
+            raise RuntimeError("另存为保存按钮尚不可用，未提交")
+        # 使用控件消息提交，不依赖系统配色、按钮坐标或当前键盘焦点。
+        save_buttons[0].click()
         last_size = None
         for _ in range(150):
             files = list(directory.glob(prefix + "*"))

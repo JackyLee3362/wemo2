@@ -201,7 +201,7 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 - `MediaWorkflowSpec`：入口、菜单识别目标、步骤表和运行上限。
 
 它们统一由 `UiProfile.media_targets/media_workflows` 维护，不增加任务继承或插件体系。
-内置 `save_media` 定义打开查看器、打开菜单、选择另存为、保存文件、返回列表五步。
+内置 `save_media` 定义打开查看器、等待加载、打开菜单、选择另存为、保存文件、返回列表六步。
 启动时检查目标和后继存在、状态衔接、步骤可达性、输入循环及运行上限。
 每个流程必须恰好保存一次、返回一次，未知流程在应用配置加载时拒绝。
 
@@ -223,7 +223,7 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 
 `WindowsCollectorConfig` 新增 `resource_dir` 与 `account`。配置文件解析相对资源路径，
 组装入口负责创建 `MomentArchive`，核心 wemo2 不解释目录布局或截图字段。
-输出层级为资源根目录 → 备份账号 → 推断的发布日期 → 朋友圈身份键。
+输出层级为资源根目录 → 备份账号 → 推断的发布日期（YYYY-MM-DD） → 朋友圈身份键。
 
 `TextRecognizer.post_details` 识别人名、文案、时间原文；`dates.approximate_day`
 以截图时区推断到日。`records.py` 定义 Pydantic 数据契约与相对资源引用。
@@ -242,3 +242,7 @@ MomentArchive 在采集结束或失败时汇总：保存截图、校验并拷贝
 在 UiProfile 声明允许的恢复页面，`Expectation.alternate_pages` 逐个验证其标志。
 当实际页面已是导航终点时，PageRouter 立即返回，跳过后续菜单点击。
 `ensure(page)` 仍要求精确页面，未配置标志的页面不能作为恢复成功条件。
+
+加载步骤是只读 `wait_ready`，ActionResult 的 attempted/executed 均为 false；等待后通过查看器状态与 OCR 加载提示校验，超时停止。等待与总超时配置在 FeedCaptureConfig。标准保存对话框使用 Win32 控件 ID 填写及提交，不发送依赖焦点的 Enter，也不使用图片模板。
+
+滚动进展、动画稳定与相邻视口匹配均使用 UiProfile.feed_static_width 定义的头像侧栏，避开播放中的视频。默认 wheel_steps=3，在列表左侧空隙发送一次滚轮。验证失败也保存最后原始帧，不把视频播放当作滚动或历史到底。FeedCapture 的进度回调在当前帧媒体处理后增量导出闭合片段，采集结束导出末段。

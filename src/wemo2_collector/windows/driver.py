@@ -4,7 +4,6 @@ import ctypes
 import sys
 import time
 from ctypes import wintypes
-from datetime import UTC, datetime
 
 from loguru import logger
 
@@ -17,6 +16,7 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
+from wemo2_collector.validation import validate_target
 
 
 class WindowsDriver(BaseDriver):
@@ -201,19 +201,7 @@ class WindowsDriver(BaseDriver):
         old_device.screen.close()
 
     def _validate_target(self, frame: Screenshot, target: LocatedTarget) -> None:
-        if target.frame_id != frame.frame_id:
-            raise RuntimeError("定位结果不属于当前截图，拒绝点击")
-        age = (datetime.now(UTC) - frame.captured_at).total_seconds()
-        if age < 0 or age > 5:
-            raise RuntimeError("截图已经过期，请重新定位后点击")
-        bounds = target.bounds
-        if (
-            bounds.x < 0
-            or bounds.y < 0
-            or bounds.x + bounds.width > frame.surface.bounds.width
-            or bounds.y + bounds.height > frame.surface.bounds.height
-        ):
-            raise RuntimeError("定位目标超出客户区，拒绝点击")
+        validate_target(frame, target)
         self.verify_capture(frame.surface)
 
     def swipe(

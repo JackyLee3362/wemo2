@@ -7,13 +7,9 @@ from typing import Literal
 
 from loguru import logger
 
-from wemo2_collector.interfaces import (
-    BaseController,
-    BaseDriver,
-    BaseLocator,
-    BaseScreenshotter,
-    BaseValidator,
-)
+from wemo2_collector import validation
+from wemo2_collector.interfaces import BaseDriver
+from wemo2_collector.locating import AirtestLocator
 from wemo2_collector.models import (
     ActionResult,
     ControllerConfig,
@@ -22,6 +18,8 @@ from wemo2_collector.models import (
     LocatedTarget,
     Screenshot,
 )
+from wemo2_collector.profiles import UiProfile
+from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
 
 class UiActionError(RuntimeError):
@@ -32,7 +30,7 @@ class UiActionError(RuntimeError):
         super().__init__(result.error or "界面动作失败")
 
 
-class UiController(BaseController):
+class UiController:
     """统一执行截图、定位、单次点击或滑动，以及操作后的等待和校验。
 
     只读步骤允许有限重试；输入动作不自动重发，始终保留执行状态和证据。
@@ -42,16 +40,16 @@ class UiController(BaseController):
     def __init__(
         self,
         driver: BaseDriver,
-        screenshotter: BaseScreenshotter,
-        locator: BaseLocator,
-        validator: BaseValidator,
+        screenshotter: WindowsScreenshotter,
+        locator: AirtestLocator,
+        profile: UiProfile,
         config: ControllerConfig | None = None,
         directory: Path | None = None,
     ):
         self.driver = driver
         self.screenshotter = screenshotter
         self.locator = locator
-        self.validator = validator
+        self.profile = profile
         self.config = config or ControllerConfig()
         self.directory = directory
         self._artifacts: list[Path] = []
@@ -71,7 +69,7 @@ class UiController(BaseController):
                 # 即使校验失败，也保留截图路径作为诊断证据。
                 self._artifacts.append(frame.image_path)
                 self.driver.verify_capture(surface)
-                self.validator.validate_frame(frame)
+                validation.validate_frame(frame, self.config.max_frame_age)
                 return frame
             except (OSError, RuntimeError, ValueError) as error:
                 logger.exception(
@@ -89,10 +87,10 @@ class UiController(BaseController):
         self, name: str, frame: Screenshot | None = None
     ) -> LocatedTarget | None:
         if frame is not None:
-            self.validator.validate_frame(frame)
+            validation.validate_frame(frame, self.config.max_frame_age)
             target = self.locator.locate(frame, name)
             if target is not None:
-                self.validator.validate_target(frame, target)
+                validation.validate_target(frame, target, self.config.max_frame_age)
             return target
         for attempt in range(self.config.locate_attempts):
             fresh = self.capture()
@@ -104,7 +102,7 @@ class UiController(BaseController):
         return None
 
     def detect_page(self, frame: Screenshot) -> str:
-        return self.validator.detect_page(frame)
+        return validation.detect_page(frame, self.profile, self.locator)
 
     def click(
         self,
@@ -202,8 +200,10 @@ class UiController(BaseController):
             before, target = self._prepare(result, source_page)
             if expectation is not None:
                 # 先确认验证规则和区域合法，不能输入后才发现配置错误。
-                self.validator.evaluate(before, before, expectation)
-            self.validator.validate_target(before, target)
+                validation.evaluate(
+                    before, before, expectation, self.profile, self.locator
+                )
+            validation.validate_target(before, target, self.config.max_frame_age)
             self.driver.verify_capture(before.surface)
             result.attempted = True
             if operation == "click":
@@ -236,21 +236,19 @@ class UiController(BaseController):
             result.after = after
             if result.expectation is None:
                 return  # 只有平台执行事实，没有页面成功结论。
-            validation = self.validator.evaluate(
-                result.before, after, result.expectation
+            checked = validation.evaluate(
+                result.before, after, result.expectation, self.profile, self.locator
             )
-            result.validation = validation
-            if validation.status == "passed":
+            result.validation = checked
+            if checked.status == "passed":
                 result.status = "verified"
                 return
-            if validation.status == "unavailable":
+            if checked.status == "unavailable":
                 result.status = "pending"
                 return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RuntimeError(
-                    f"动作后验证超时：{validation.message}；不会重复输入"
-                )
+                raise RuntimeError(f"动作后验证超时：{checked.message}；不会重复输入")
             time.sleep(min(self.config.poll_interval, remaining))
 
     def _finish(self, result: ActionResult) -> ActionResult:

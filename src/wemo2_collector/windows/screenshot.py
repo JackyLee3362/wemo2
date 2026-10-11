@@ -7,13 +7,13 @@ from uuid import uuid4
 
 from PIL import Image
 
-from wemo2_collector.interfaces import BaseScreenshotter
 from wemo2_collector.models import Platform, Screenshot, Surface
 from wemo2_collector.timezones import resolve_timezone
+from wemo2_collector.validation import validate_image
 from wemo2_collector.windows.backend import create_device
 
 
-class WindowsScreenshotter(BaseScreenshotter):
+class WindowsScreenshotter:
     """通过 Airtest 截取虚拟桌面并裁出客户区，保存 PNG 和对应截图元数据。
 
     校验尺寸和近乎全黑的结果，不把完整桌面写入磁盘，也不负责页面判断。
@@ -30,20 +30,7 @@ class WindowsScreenshotter(BaseScreenshotter):
             raise RuntimeError("截图器仅支持 Windows 窗口")
         image = self._capture_image(surface)
         try:
-            if image.size != (surface.bounds.width, surface.bounds.height):
-                raise RuntimeError(
-                    f"截图尺寸 {image.width}x{image.height} 与客户区尺寸 "
-                    f"{surface.bounds.width}x{surface.bounds.height} 不一致"
-                    f"（DPI 缩放 {surface.scale}），请检查 DPI 或窗口尺寸变化"
-                )
-            grayscale = image.convert("L")
-            try:
-                histogram = grayscale.histogram()
-            finally:
-                grayscale.close()
-            dark_pixels = sum(histogram[:8])
-            if dark_pixels / (image.width * image.height) >= 0.999:
-                raise RuntimeError("微信截图几乎全黑，请确认桌面未锁定且窗口可见")
+            validate_image(image, (surface.bounds.width, surface.bounds.height))
             captured_at = datetime.now(self.timezone)
             frame_id = str(uuid4())
             filename = (

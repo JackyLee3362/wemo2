@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
+from wemo2_collector import validation
 from wemo2_collector.controller import UiController
-from wemo2_collector.locating import RegistryLocator
-from wemo2_collector.matching import TemplateMatcher
+from wemo2_collector.locating import AirtestLocator
 from wemo2_collector.models import (
     ControllerConfig,
     LocatedTarget,
@@ -20,9 +20,8 @@ from wemo2_collector.models import (
     Surface,
     ValidationResult,
 )
-from wemo2_collector.profiles import build_profiles
+from wemo2_collector.profiles import build_profile
 from wemo2_collector.routing import PageRouter
-from wemo2_collector.validation import UiValidator
 from wemo2_collector.windows.driver import WindowsDriver
 
 
@@ -34,7 +33,7 @@ class RoutingTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name)
         self.config = RouteConfig(target="discover")
-        self.pages, self.themes = build_profiles()
+        self.profile = build_profile()
         self.surface = Surface(
             platform=Platform.windows,
             surface_id="123",
@@ -51,7 +50,7 @@ class RoutingTests(unittest.TestCase):
             image.save(self.frame.image_path)
 
     def make_image(self, positions):
-        with Image.open(self.themes.target("dark", "moments_entry").path) as template:
+        with Image.open(self.profile.target("dark", "moments_entry").path) as template:
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             for position in positions:
                 image.paste(template, position)
@@ -59,7 +58,7 @@ class RoutingTests(unittest.TestCase):
             image.close()
 
     def test_template_finds_icon_and_rejects_missing_or_multiple_targets(self):
-        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
         self.make_image([(24, 306)])
         target = locator.locate(self.frame, "moments_entry")
         self.assertIsNotNone(target)
@@ -73,7 +72,7 @@ class RoutingTests(unittest.TestCase):
     def test_sidebar_matching_ignores_same_icon_in_content_area(self):
         self.make_image([(400, 306)])
         self.assertIsNone(
-            RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig())).locate(
+            AirtestLocator(self.profile, "dark", MatchConfig()).locate(
                 self.frame, "moments_entry"
             )
         )
@@ -147,10 +146,10 @@ class RoutingTests(unittest.TestCase):
             driver,
             screenshotter,
             locator,
-            UiValidator(self.pages, locator, policy),
+            self.profile,
             policy,
         )
-        return PageRouter(controller, self.pages, self.config)
+        return PageRouter(controller, self.profile, self.config)
 
     def test_route_clicks_once_and_verifies_page_screenshot(self):
         router = self.make_router()
@@ -174,7 +173,7 @@ class RoutingTests(unittest.TestCase):
         with (
             patch("wemo2_collector.controller.time.monotonic", side_effect=[0, 6]),
             patch.object(
-                router.controller.validator,
+                validation,
                 "evaluate",
                 return_value=ValidationResult(status="not_met", message="目标页未出现"),
             ),
@@ -186,22 +185,22 @@ class RoutingTests(unittest.TestCase):
     def test_detect_requires_both_selected_icon_and_discovery_menu(self):
         driver = MagicMock()
         driver.current_surface.return_value = self.surface
-        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
         router = PageRouter(
             UiController(
                 driver,
                 MagicMock(),
                 locator,
-                UiValidator(self.pages, locator, ControllerConfig()),
+                self.profile,
             ),
-            self.pages,
+            self.profile,
             self.config,
         )
         with (
             Image.open(
-                self.themes.target("dark", "discover_selected").path
+                self.profile.target("dark", "discover_selected").path
             ) as selected,
-            Image.open(self.themes.target("dark", "discover_menu").path) as menu,
+            Image.open(self.profile.target("dark", "discover_menu").path) as menu,
         ):
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             image.paste(selected, (24, 306))
@@ -222,8 +221,8 @@ class RoutingTests(unittest.TestCase):
         router.controller.driver.click.assert_not_called()
 
     def test_moments_menu_locator_finds_row_and_rejects_multiple_rows(self):
-        locator = RegistryLocator(self.themes, "dark", TemplateMatcher(MatchConfig()))
-        with Image.open(self.themes.target("dark", "moments_menu").path) as template:
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
+        with Image.open(self.profile.target("dark", "moments_menu").path) as template:
             image = Image.new("RGB", (1100, 800), (40, 40, 40))
             image.paste(template, (94, 116))
             image.save(self.frame.image_path)
@@ -274,3 +273,51 @@ class RoutingTests(unittest.TestCase):
             router.controller.driver.click.call_args_list[1].args[1].name,
             "moments_menu",
         )
+
+    def test_airtest_locator_handles_reference_dpi_conversion(self):
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
+        with Image.open(self.profile.target("dark", "moments_entry").path) as template:
+            for scale in (1.0, 1.5):
+                size = round(template.width * scale / 1.25)
+                with (
+                    self.subTest(scale=scale),
+                    Image.new("RGB", (1100, 800), (40, 40, 40)) as image,
+                ):
+                    with template.resize(
+                        (size, size), Image.Resampling.BILINEAR
+                    ) as resized:
+                        image.paste(resized, (24, 306))
+                    image.save(self.frame.image_path)
+                frame = self.frame.model_copy(
+                    update={"surface": self.surface.model_copy(update={"scale": scale})}
+                )
+                target = locator.locate(frame, "moments_entry")
+                self.assertIsNotNone(target)
+                self.assertEqual(
+                    target.bounds, Rect(x=24, y=306, width=size, height=size)
+                )
+                self.assertEqual(target.method, "airtest_template")
+
+    def test_airtest_locator_rejects_separate_targets_at_different_sizes(self):
+        locator = AirtestLocator(self.profile, "dark", MatchConfig())
+        with (
+            Image.open(self.profile.target("dark", "moments_entry").path) as template,
+            Image.new("RGB", (1100, 800), (40, 40, 40)) as image,
+        ):
+            image.paste(template, (24, 306))
+            with template.resize((25, 25), Image.Resampling.BILINEAR) as smaller:
+                image.paste(smaller, (24, 500))
+            image.save(self.frame.image_path)
+        self.assertIsNone(locator.locate(self.frame, "moments_entry"))
+
+    def test_flat_template_is_rejected_instead_of_matching_entire_screen(self):
+        path = self.path / "flat.png"
+        with Image.new("RGB", (28, 28), "white") as image:
+            image.save(path)
+        self.profile.themes["dark"]["moments_entry"] = self.profile.target(
+            "dark", "moments_entry"
+        ).model_copy(update={"path": path})
+        with self.assertRaisesRegex(ValueError, "缺少可匹配的图案"):
+            AirtestLocator(self.profile, "dark", MatchConfig()).locate(
+                self.frame, "moments_entry"
+            )

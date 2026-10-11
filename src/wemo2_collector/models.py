@@ -53,18 +53,8 @@ class LocatedTarget(BaseModel):
     method: str  # template、ocr 等方法名。
 
 
-class TextBlock(BaseModel):
-    """文字识别器输出的可见文字块；不直接等同于一条朋友圈动态。"""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    frame_id: str
-    text: str
-    bounds: Rect  # 截图局部像素坐标。
-    confidence: float = Field(ge=0, le=1)
-
-
 class RouteConfig(BaseModel):
-    """路由动作名由 PageRegistry 校验；none 表示只截图。"""
+    """路由动作名由 UiProfile 校验；none 表示只截图。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     target: str = Field(default="none", min_length=1)

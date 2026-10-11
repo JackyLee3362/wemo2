@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from PIL import Image
 from pydantic import ValidationError
 
+from wemo2_collector import validation
 from wemo2_collector.controller import UiController
 from wemo2_collector.models import (
     ActionResult,
@@ -18,8 +19,7 @@ from wemo2_collector.models import (
     Screenshot,
     Surface,
 )
-from wemo2_collector.pages import PageRegistry, PageSpec
-from wemo2_collector.validation import UiValidator
+from wemo2_collector.profiles import PageSpec, UiProfile
 from wemo2_collector.windows.driver import WindowsDriver
 
 
@@ -38,10 +38,13 @@ class UiControllerTests(unittest.TestCase):
         )
         self.before = self.make_frame("before")
         self.after = self.make_frame("after")
-        self.pages = PageRegistry()
-        self.pages.register_page(PageSpec(name="home", required=["home_mark"]))
-        self.pages.register_page(PageSpec(name="done", required=["done_mark"]))
-        self.pages.register_page(PageSpec(name="unverifiable"))
+        self.profile = UiProfile(
+            pages={
+                "home": PageSpec(name="home", required=["home_mark"]),
+                "done": PageSpec(name="done", required=["done_mark"]),
+                "unverifiable": PageSpec(name="unverifiable"),
+            }
+        )
         self.driver = MagicMock()
         self.driver.prepare_capture.return_value = self.surface
         self.capture = MagicMock()
@@ -49,12 +52,11 @@ class UiControllerTests(unittest.TestCase):
         self.locator = MagicMock()
         self.locator.locate.side_effect = self.locate
         self.config = ControllerConfig()
-        self.validator = UiValidator(self.pages, self.locator, self.config)
         self.controller = UiController(
             self.driver,
             self.capture,
             self.locator,
-            self.validator,
+            self.profile,
             self.config,
             self.path / "actions",
         )
@@ -299,14 +301,18 @@ class UiControllerTests(unittest.TestCase):
         expectation = Expectation(
             kind="change", region=Rect(x=0, y=0, width=20, height=20)
         )
-        result = self.validator.evaluate(self.before, self.after, expectation)
+        result = validation.evaluate(
+            self.before, self.after, expectation, self.profile, self.locator
+        )
         self.assertEqual(result.status, "not_met")
         changed_surface = self.surface.model_copy(update={"surface_id": "456"})
         with self.assertRaisesRegex(RuntimeError, "窗口或区域已变化"):
-            self.validator.evaluate(
+            validation.evaluate(
                 self.before,
                 self.after.model_copy(update={"surface": changed_surface}),
                 expectation,
+                self.profile,
+                self.locator,
             )
 
     def test_record_write_failure_does_not_hide_executed_input(self):
@@ -341,3 +347,12 @@ class UiControllerTests(unittest.TestCase):
                 ):
                     driver.swipe(self.before, target, direction, distance)
         driver.device.swipe.assert_not_called()
+
+    def test_locator_failure_keeps_original_error_and_does_not_click(self):
+        self.locator.locate.side_effect = OSError("Airtest matching failed")
+        result = self.controller.click("button")
+        self.assertEqual(result.status, "failed")
+        self.assertFalse(result.attempted)
+        self.assertIn("Airtest matching failed", result.error)
+        self.driver.click.assert_not_called()
+        self.assertEqual(self.saved(result).error, result.error)

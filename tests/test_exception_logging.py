@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from loguru import logger
+from PIL import Image
 from typer.testing import CliRunner
 
 from wemo2.cli import cli
@@ -14,6 +15,7 @@ from wemo2.pseudo import PseudoStore
 from wemo2.store import SQLiteStore
 from wemo2_collector.controller import UiController
 from wemo2_collector.models import ControllerConfig, Platform, Rect, Screenshot, Surface
+from wemo2_collector.profiles import UiProfile
 
 
 class ExceptionLoggingTests(unittest.TestCase):
@@ -115,6 +117,8 @@ class ExceptionLoggingTests(unittest.TestCase):
             surface=surface,
             image_path=self.path / "retry.png",
         )
+        with Image.new("RGB", (10, 10), "white") as image:
+            image.save(frame.image_path)
         driver = MagicMock()
         driver.prepare_capture.return_value = surface
         screenshotter = MagicMock()
@@ -126,7 +130,7 @@ class ExceptionLoggingTests(unittest.TestCase):
             driver,
             screenshotter,
             MagicMock(),
-            MagicMock(),
+            UiProfile(),
             ControllerConfig(capture_attempts=2),
         )
         with patch("wemo2_collector.controller.time.sleep"):

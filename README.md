@@ -35,7 +35,7 @@ VS Code 可选择“wemo2_collector: 调试朋友圈路由”按 F5。
 默认先验证发现菜单，再定位并点击“朋友圈”一行，保存点击后的待验证截图。
 已在发现页时不重复点击指南针；匹配不唯一或跳转超时会报错。
 
-页面、主题、模板及导航关系统一在 `src/wemo2_collector/profiles.py` 注册。
+页面、主题、模板及导航关系统一在 `src/wemo2_collector/profiles.py` 的 `UiProfile` 中维护。
 `[collector_options.route]` 控制动作及超时，`[collector_options.matcher]` 控制匹配阈值；
 窗口、主题等设置放在 `[collector_options]`。模板参考缩放为 125%，当前只提供深色模板。
 朋友圈动态列表仍没有验证特征，不能把一次点击当作已验证到达。
@@ -235,7 +235,7 @@ uv run python -m wemo2_collector.moments_main
 朋友圈调试入口会先验证发现菜单，再定位并点击“朋友圈”一行，保存点击后的截图。
 若打开同进程独立窗口，会跟随该窗口截图。动态列表尚未自动验证或读取。
 Airtest 当前依赖 NumPy 1.x 与 OpenCV contrib 4.6，不再同时安装 opencv-python-headless。
-模板定位继续通过独立 Locator 实现，皮肤兼容仍需维护模板；Android 适配留待后续实现。
+模板定位由 `AirtestLocator` 直接调用 Airtest 的多目标匹配能力，皮肤兼容仍需维护模板；Android 适配留待后续实现。
 
 ## 采集器专属配置与组件边界
 
@@ -264,8 +264,8 @@ threshold = 0.9
 请分别移入 `[collector_options]` 和 `[collector_options.route]`。JSON 采集使用 `path` 字段。
 仓库中的示例、截图和朋友圈调试配置已迁移，F5 入口保持可用。
 
-页面注册器管理识别特征和导航关系，主题注册器管理模板资源，图片匹配器输出匹配位置，
-界面控制器统一截图、定位、点击/拖动、等待验证及动作证据；校验器独立判断预期。扩展方式见
+一个 `UiProfile` 管理页面、路由和各主题的目标模板，`AirtestLocator` 输出匹配位置，
+`UiController` 统一输入与证据，`validation.py` 的函数判断预期。扩展方式见
 [采集器架构](src/wemo2_collector/ARCHITECTURE.md)。
 
 ## 界面控制器与动作结果
@@ -288,3 +288,7 @@ Windows 滑动为区域内鼠标拖动，朋友圈滚动采集仍未接入。
 配置加载或正式日志路径初始化失败时，异常先写入 `logs/wemo2.log` 的启动日志；
 默认目录不可写时改用系统临时目录中的 `wemo2/startup.log`，错误提示会显示实际日志路径。
 帮助和版本不会创建日志。
+
+内部组件已精简：页面与主题注册器合并为 UiProfile，定位器与匹配器合并为 AirtestLocator，
+单实现的控制器/路由器抽象和未落地的 OCR/卡片解析接口已移除。原有配置与 F5 入口保持可用。
+当前有限重试循环保持直观，暂不引入 Tenacity、状态机或插件框架。

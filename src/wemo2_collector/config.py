@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from wemo2_collector.models import ControllerConfig, MatchConfig, Platform, RouteConfig
-from wemo2_collector.profiles import build_profiles
+from wemo2_collector.profiles import build_profile
 from wemo2_collector.timezones import resolve_timezone
 
 
@@ -37,10 +37,10 @@ def load_windows_options(options: dict, directory: Path) -> dict:
     config = WindowsCollectorConfig.model_validate(options)
     if config.platform != Platform.windows:
         raise ValueError("windows_screenshot 采集器不支持 Android")
-    pages, themes = build_profiles()
-    themes.validate(config.theme, pages)
+    profile = build_profile()
+    profile.validate_theme(config.theme)
     if config.route.target != "none":
-        pages.get_route(config.route.target)
+        profile.get_route(config.route.target)
     path = config.screenshot_dir
     if not path.is_absolute():
         path = (directory / path).resolve()

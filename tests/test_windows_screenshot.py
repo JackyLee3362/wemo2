@@ -14,9 +14,8 @@ from wemo2.cli import cli
 from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig
 from wemo2_collector.main import run_collector
-from wemo2_collector.models import ControllerConfig, Platform, Rect, Screenshot, Surface
-from wemo2_collector.profiles import build_profiles
-from wemo2_collector.validation import UiValidator
+from wemo2_collector.models import Platform, Rect, Screenshot, Surface
+from wemo2_collector.validation import validate_frame
 from wemo2_collector.windows.driver import WindowsDriver
 from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
@@ -505,11 +504,9 @@ class WindowsScreenshotTests(unittest.TestCase):
             surface=self.surface,
             image_path=path,
         )
-        pages, _ = build_profiles()
-        validator = UiValidator(pages, MagicMock(), ControllerConfig())
         with patch("wemo2_collector.validation.datetime") as clock:
             clock.now.return_value = now
-            validator.validate_frame(frame)
+            validate_frame(frame)
             clock.now.return_value = now + timedelta(seconds=5)
             with self.assertRaisesRegex(RuntimeError, "已经过期"):
-                validator.validate_frame(frame)
+                validate_frame(frame)

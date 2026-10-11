@@ -13,6 +13,11 @@ from wemo2_collector.windows.backend import create_device
 
 
 class WindowsScreenshotter(BaseScreenshotter):
+    """通过 Airtest 截取虚拟桌面并裁出客户区，保存 PNG 和对应截图元数据。
+
+    校验尺寸和近乎全黑的结果，不把完整桌面写入磁盘，也不负责页面判断。
+    """
+
     def __init__(self, directory: str | Path = "data/screenshot"):
         self.directory = Path(directory)
 

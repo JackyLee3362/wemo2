@@ -25,6 +25,11 @@ class ThemeSpec(BaseModel):
 
 
 class ThemeRegistry:
+    """统一登记主题和语义目标模板，校验页面及路由所需目标是否齐全。
+
+    拒绝重复主题和未知目标，不负责自动识别主题或匹配截图。
+    """
+
     def __init__(self):
         self.themes: dict[str, ThemeSpec] = {}
 

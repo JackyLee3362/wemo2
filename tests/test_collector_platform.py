@@ -16,10 +16,14 @@ from wemo2_collector.models import Platform
 
 
 class CollectorPlatformTests(unittest.TestCase):
+    """验证采集源平台的专属配置传递、错误校验和离线记录来源保留。"""
+
     def test_platform_reaches_registered_collector_from_file(self):
         received = []
 
         class Collector(PseudoCollector):
+            """记录收到的平台参数，用于验证注册表向采集器传递专属配置。"""
+
             def __init__(self, platform):
                 received.append(platform)
                 super().__init__(platform=platform)

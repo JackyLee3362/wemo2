@@ -21,6 +21,11 @@ from wemo2.models import (
 
 
 class PseudoCollector(BaseCollector):
+    """生成内置模拟记录或逐条交付指定记录，用于验证组件组合和重复处理。
+
+    输出模型副本，不读取真实微信界面。
+    """
+
     def __init__(
         self,
         observations: Iterable[Observation] | None = None,

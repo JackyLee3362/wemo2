@@ -8,6 +8,11 @@ from wemo2_collector.themes import TemplateSpec
 
 
 class TemplateMatcher(BaseImageMatcher):
+    """在模板指定区域内执行多尺度图片匹配，返回位置和匹配分数。
+
+    低分或多个独立目标时拒绝匹配，不理解页面含义，也不执行界面动作。
+    """
+
     def __init__(self, config: MatchConfig):
         self.config = config
 

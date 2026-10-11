@@ -7,10 +7,22 @@ from ctypes import wintypes
 from datetime import UTC, datetime
 
 from wemo2_collector.interfaces import BaseDriver
-from wemo2_collector.models import LocatedTarget, Platform, Rect, Screenshot, Surface
+from wemo2_collector.models import (
+    Direction,
+    LocatedTarget,
+    Platform,
+    Rect,
+    Screenshot,
+    Surface,
+)
 
 
 class WindowsDriver(BaseDriver):
+    """通过 Airtest 管理微信窗口会话，并执行校验后的点击和区域内拖动。
+
+    负责物理坐标、DPI、焦点及同进程窗口跟随；释放会话时不关闭用户微信。
+    """
+
     def __init__(self, window_title: str = "微信", process_id: int | None = None):
         self.window_title = window_title
         self.process_id = process_id
@@ -141,20 +153,8 @@ class WindowsDriver(BaseDriver):
             raise RuntimeError("截图时微信失去前台焦点，请重试")
 
     def click(self, frame: Screenshot, target: LocatedTarget) -> None:
-        if target.frame_id != frame.frame_id:
-            raise RuntimeError("定位结果不属于当前截图，拒绝点击")
-        age = (datetime.now(UTC) - frame.captured_at).total_seconds()
-        if age < 0 or age > 5:
-            raise RuntimeError("截图已经过期，请重新定位后点击")
+        self._validate_target(frame, target)
         bounds = target.bounds
-        if (
-            bounds.x < 0
-            or bounds.y < 0
-            or bounds.x + bounds.width > frame.surface.bounds.width
-            or bounds.y + bounds.height > frame.surface.bounds.height
-        ):
-            raise RuntimeError("定位目标超出客户区，拒绝点击")
-        self.verify_capture(frame.surface)
         x = frame.surface.bounds.x + bounds.x + bounds.width // 2
         y = frame.surface.bounds.y + bounds.y + bounds.height // 2
         # Airtest 的窗口点击坐标相对外框；我们的定位结果相对客户区。
@@ -194,8 +194,60 @@ class WindowsDriver(BaseDriver):
             raise
         old_device.screen.close()
 
-    def scroll(self, surface: Surface, distance: int) -> None:
-        raise NotImplementedError("当前阶段只支持截图，不执行滚动")
+    def _validate_target(self, frame: Screenshot, target: LocatedTarget) -> None:
+        if target.frame_id != frame.frame_id:
+            raise RuntimeError("定位结果不属于当前截图，拒绝点击")
+        age = (datetime.now(UTC) - frame.captured_at).total_seconds()
+        if age < 0 or age > 5:
+            raise RuntimeError("截图已经过期，请重新定位后点击")
+        bounds = target.bounds
+        if (
+            bounds.x < 0
+            or bounds.y < 0
+            or bounds.x + bounds.width > frame.surface.bounds.width
+            or bounds.y + bounds.height > frame.surface.bounds.height
+        ):
+            raise RuntimeError("定位目标超出客户区，拒绝点击")
+        self.verify_capture(frame.surface)
+
+    def swipe(
+        self,
+        frame: Screenshot,
+        target: LocatedTarget,
+        direction: Direction,
+        distance: int,
+    ) -> None:
+        """Airtest Windows 的滑动是区域内鼠标拖动，不是鼠标滚轮。"""
+        self._validate_target(frame, target)
+        if type(distance) is not int or distance <= 0:
+            raise ValueError("滑动距离必须是正整数物理像素")
+        bounds = target.bounds
+        x = bounds.x + bounds.width // 2
+        y = bounds.y + bounds.height // 2
+        end_x, end_y = x, y
+        if direction == "up":
+            end_y -= distance
+        elif direction == "down":
+            end_y += distance
+        elif direction == "left":
+            end_x -= distance
+        elif direction == "right":
+            end_x += distance
+        else:
+            raise ValueError("未知滑动方向")
+        if not (
+            bounds.x <= end_x < bounds.x + bounds.width
+            and bounds.y <= end_y < bounds.y + bounds.height
+        ):
+            raise RuntimeError("滑动端点超出定位区域，拒绝执行")
+        left, top = self.device.get_pos()
+        offset_x = frame.surface.bounds.x - left
+        offset_y = frame.surface.bounds.y - top
+        self.device.swipe(
+            (offset_x + x, offset_y + y),
+            (offset_x + end_x, offset_y + end_y),
+            duration=0.5,
+        )
 
     def close(self) -> None:
         """只释放截图资源并恢复线程 DPI，不退出微信。"""

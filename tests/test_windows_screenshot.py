@@ -18,6 +18,8 @@ from wemo2_collector.windows.screenshot import WindowsScreenshotter
 
 
 class WindowsScreenshotTests(unittest.TestCase):
+    """验证 Windows 窗口筛选、截图裁切、颜色转换、焦点检查和会话释放。"""
+
     def test_near_black_frame_with_one_white_pixel_is_rejected(self):
         image = Image.new("RGB", (80, 60), "black")
         image.putpixel((0, 0), (255, 255, 255))
@@ -209,7 +211,7 @@ class WindowsScreenshotTests(unittest.TestCase):
         driver.attach.return_value = self.surface
         driver.prepare_capture.return_value = self.surface
         coordinator.collector.driver = driver
-        coordinator.collector.interaction.driver = driver
+        coordinator.collector.controller.driver = driver
         with patch(
             "wemo2_collector.windows.screenshot.WindowsScreenshotter._capture_image",
             side_effect=OSError("capture failed"),

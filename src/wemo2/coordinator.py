@@ -9,6 +9,11 @@ from wemo2.models import RunResult, StopPolicy
 
 
 class Coordinator:
+    """依赖抽象组件，逐条串联采集、去重和事务保存。
+
+    记录运行统计，根据重复策略停止，并在结束或异常时释放采集器。
+    """
+
     def __init__(
         self,
         collector: BaseCollector,

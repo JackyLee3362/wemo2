@@ -15,6 +15,8 @@ from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
 
 
 class TrackingCollector(PseudoCollector):
+    """跟踪记录消费数量、停止调用和生成器关闭，验证提前停止的资源处理。"""
+
     def __init__(self, records):
         super().__init__(records)
         self.yielded = 0
@@ -34,6 +36,8 @@ class TrackingCollector(PseudoCollector):
 
 
 class StopPolicyTests(unittest.TestCase):
+    """验证重复停止规则、计数重置、保存顺序及异常时的采集器释放。"""
+
     def setUp(self):
         records = list(PseudoCollector().collect())
         self.first = records[0]
@@ -99,6 +103,8 @@ class StopPolicyTests(unittest.TestCase):
 
     def test_save_failure_still_releases_collector_and_rolls_back(self):
         class FailingStore(PseudoStore):
+            """在保存后主动抛错，验证协调器回滚数据并关闭采集器。"""
+
             def save(self, observation, decision):
                 super().save(observation, decision)
                 raise RuntimeError("failed")

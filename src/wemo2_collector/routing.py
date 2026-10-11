@@ -1,41 +1,27 @@
 """通用页面路由：通过注册的页面标志和有向路由执行导航。"""
 
-import time
-
-from loguru import logger
-
-from wemo2_collector.interfaces import BaseInteractor, BasePageRouter
-from wemo2_collector.models import RouteConfig, Screenshot
+from wemo2_collector.controller import UiActionError
+from wemo2_collector.interfaces import BaseController, BasePageRouter
+from wemo2_collector.models import ActionResult, Expectation, RouteConfig, Screenshot
 from wemo2_collector.pages import PageRegistry, RouteSpec
 
 
 class PageRouter(BasePageRouter):
+    """读取页面注册表规划导航路径，将目标、前置页面和预期交给控制器。
+
+    不直接操作平台，也不维护等待重试循环；未验证页面不能作为中间节点。
+    """
+
     def __init__(
-        self, interaction: BaseInteractor, pages: PageRegistry, config: RouteConfig
+        self, controller: BaseController, pages: PageRegistry, config: RouteConfig
     ):
-        self.interaction = interaction
+        self.controller = controller
+        self.last_result: ActionResult | None = None
         self.pages = pages
         self.config = config
 
     def detect(self, frame: Screenshot) -> str:
-        matches = []
-        cache = {}
-        for page in self.pages.pages.values():
-            if not page.required:
-                continue
-            valid = True
-            for name in page.required + page.forbidden:
-                if name not in cache:
-                    cache[name] = self.interaction.locate(frame, name) is not None
-                if name in page.required and not cache[name]:
-                    valid = False
-                if name in page.forbidden and cache[name]:
-                    valid = False
-            if valid:
-                matches.append(page.name)
-        if len(matches) != 1:
-            return "unknown"
-        return matches[0]
+        return self.controller.detect_page(frame)
 
     def ensure(self, page: str) -> Screenshot:
         """只返回验证过的页面；未配置标志的动态列表不能伪装成功。"""
@@ -57,7 +43,8 @@ class PageRouter(BasePageRouter):
         require_verified: bool,
         final_route: RouteSpec | None = None,
     ) -> Screenshot:
-        frame = self.interaction.capture()
+        self.last_result = None
+        frame = self.controller.capture()
         current = self.detect(frame)
         if current == destination:
             return frame
@@ -72,30 +59,22 @@ class PageRouter(BasePageRouter):
             if not route.verified and (require_verified or index != len(steps) - 1):
                 raise ValueError("路径包含未验证页面，不能继续导航")
         for route in steps:
-            self.interaction.click(frame, route.target)
-            time.sleep(route.settle_seconds)
-            if not route.verified:
-                frame = self.interaction.capture(
-                    follow_foreground=route.follow_foreground
-                )
-                logger.warning(
-                    "已执行动作 {}，页面 {} 待验证：{}",
-                    route.name,
-                    route.destination,
-                    frame.image_path,
-                )
-                return frame
-            deadline = time.monotonic() + self.config.timeout_seconds
-            while time.monotonic() < deadline:
-                frame = self.interaction.capture(
-                    follow_foreground=route.follow_foreground
-                )
-                if self.detect(frame) == route.destination:
-                    logger.info("页面 {} 已验证", route.destination)
-                    break
-                time.sleep(0.2)
-            else:
-                raise RuntimeError(f"导航至 {route.destination} 超时；未重复点击")
+            result = self.controller.click(
+                route.target,
+                Expectation(kind="page", page=route.destination),
+                source_page=route.source,
+                timeout=self.config.timeout_seconds,
+                settle_seconds=route.settle_seconds,
+                follow_foreground=route.follow_foreground,
+            )
+            self.last_result = result
+            if result.status == "failed":
+                raise UiActionError(result)
+            if result.after is None:
+                raise RuntimeError("控制器未交付动作后的截图")
+            if route.verified and result.status != "verified":
+                raise RuntimeError("目标页面未通过验证，不能继续导航")
+            frame = result.after
         return frame
 
     def advance(self) -> Screenshot | None:

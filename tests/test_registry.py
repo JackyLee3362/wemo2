@@ -13,6 +13,8 @@ from wemo2.registry import ComponentRegistry, collectors, deduplicators, stores
 
 
 class RegistryTests(unittest.TestCase):
+    """验证组件登记、接口校验、构造参数映射及新增实现的完整组装流程。"""
+
     def test_duplicate_name_and_invalid_implementation_are_rejected(self):
         registry = ComponentRegistry("采集器", BaseCollector)
         registry.register("sample", PseudoCollector, default=True)
@@ -34,6 +36,8 @@ class RegistryTests(unittest.TestCase):
 
     def test_constructor_receives_only_declared_parameters(self):
         class Collector(PseudoCollector):
+            """接收注册表映射的记录参数，验证无关配置不会进入构造函数。"""
+
             def __init__(self, observations):
                 super().__init__(observations)
 
@@ -48,15 +52,21 @@ class RegistryTests(unittest.TestCase):
         created = []
 
         class NewCollector(PseudoCollector):
+            """记录创建时机的模拟采集器，用于验证新增注册实现的组装。"""
+
             def __init__(self):
                 created.append("collector")
                 super().__init__()
 
         class NewDeduplicator(PseudoDeduplicator):
+            """记录创建时机的模拟去重器，用于验证注册默认搭配。"""
+
             def __init__(self):
                 created.append("deduplicator")
 
         class NewStore(PseudoStore):
+            """记录接收到的路径，用于验证注册参数映射和存储实例创建。"""
+
             def __init__(self, path):
                 created.append(Path(path))
                 super().__init__()

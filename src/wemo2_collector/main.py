@@ -42,7 +42,7 @@ def main(config_path: Path | None = None) -> None:
         paths = run_collector(config)
         console.print(Text("当前只调试界面采集，页面验证结果见日志，尚不解析动态。"))
         for path in paths:
-            console.print(Text(f"截图已保存：{path}"))
+            console.print(Text(f"证据已保存：{path}"))
         console.print(Text(f"日志文件：{config.log_file}"))
     except Exception as error:
         logger.exception("采集器调试失败")

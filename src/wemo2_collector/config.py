@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from wemo2_collector.models import MatchConfig, Platform, RouteConfig
+from wemo2_collector.models import ControllerConfig, MatchConfig, Platform, RouteConfig
 from wemo2_collector.profiles import build_profiles
 
 
@@ -17,6 +17,7 @@ class WindowsCollectorConfig(BaseModel):
     window_title: str = Field(default="微信", min_length=1)
     window_process_id: int | None = Field(default=None, gt=0)
     theme: str = "dark"
+    controller: ControllerConfig = Field(default_factory=ControllerConfig)
     matcher: MatchConfig = Field(default_factory=MatchConfig)
     route: RouteConfig = Field(default_factory=RouteConfig)
 

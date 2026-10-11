@@ -11,16 +11,27 @@ from wemo2.composition import build_coordinator
 from wemo2.config import AppConfig, load_config
 from wemo2.pseudo import PseudoCollector
 from wemo2.registry import collectors
-from wemo2_collector.interaction import UiInteractor
+from wemo2_collector.controller import UiController
 from wemo2_collector.locating import RegistryLocator
-from wemo2_collector.models import Platform, Rect, RouteConfig, Screenshot, Surface
+from wemo2_collector.models import (
+    ActionResult,
+    ControllerConfig,
+    Platform,
+    Rect,
+    RouteConfig,
+    Screenshot,
+    Surface,
+)
 from wemo2_collector.pages import PageRegistry, PageSpec, RouteSpec
 from wemo2_collector.profiles import build_profiles
 from wemo2_collector.routing import PageRouter
 from wemo2_collector.themes import ThemeRegistry, ThemeSpec
+from wemo2_collector.validation import UiValidator
 
 
 class UiArchitectureTests(unittest.TestCase):
+    """验证页面与主题扩展、配置边界、路由规划和独立组件的职责契约。"""
+
     def setUp(self):
         self.pages, self.themes = build_profiles()
         self.frame = Screenshot(
@@ -68,34 +79,50 @@ class UiArchitectureTests(unittest.TestCase):
         )
         discover = self.frame.model_copy(update={"frame_id": "discover"})
         custom = self.frame.model_copy(update={"frame_id": "custom"})
-        marks = {
-            "home": {"moments_entry"},
-            "discover": {"discover_selected", "discover_menu"},
-            "custom": {"custom_marker"},
-        }
         interaction = MagicMock()
-        interaction.capture.side_effect = [self.frame, discover, custom]
-        interaction.locate.side_effect = lambda frame, name: (
-            MagicMock() if name in marks[frame.frame_id] else None
-        )
+        interaction.capture.return_value = self.frame
+        interaction.detect_page.return_value = "home"
+        interaction.click.side_effect = [
+            ActionResult(
+                operation="click",
+                name="moments_entry",
+                status="verified",
+                attempted=True,
+                executed=True,
+                before=self.frame,
+                after=discover,
+            ),
+            ActionResult(
+                operation="click",
+                name="custom_button",
+                status="verified",
+                attempted=True,
+                executed=True,
+                before=discover,
+                after=custom,
+            ),
+        ]
         router = PageRouter(interaction, self.pages, RouteConfig())
-        with patch("wemo2_collector.routing.time.sleep"):
+        with patch("wemo2_collector.controller.time.sleep"):
             self.assertEqual(router.run("custom_action"), custom)
-        self.assertEqual(interaction.click.call_args_list[0].args[1], "moments_entry")
-        self.assertEqual(interaction.click.call_args_list[1].args[1], "custom_button")
+        self.assertEqual(interaction.click.call_args_list[0].args[0], "moments_entry")
+        self.assertEqual(interaction.click.call_args_list[1].args[0], "custom_button")
 
     def test_multiple_page_matches_are_unknown_and_do_not_click(self):
         self.pages.register_page(PageSpec(name="conflict", required=["moments_entry"]))
-        interaction = MagicMock()
-        interaction.capture.return_value = self.frame
-        interaction.locate.side_effect = lambda frame, name: (
+        locator = MagicMock()
+        locator.locate.side_effect = lambda frame, name: (
             MagicMock() if name == "moments_entry" else None
         )
-        router = PageRouter(interaction, self.pages, RouteConfig())
-        self.assertEqual(router.detect(self.frame), "unknown")
+        validator = UiValidator(self.pages, locator, ControllerConfig())
+        self.assertEqual(validator.detect_page(self.frame), "unknown")
+        controller = MagicMock()
+        controller.capture.return_value = self.frame
+        controller.detect_page.return_value = "unknown"
+        router = PageRouter(controller, self.pages, RouteConfig())
         with self.assertRaisesRegex(RuntimeError, "当前页面未可靠识别"):
             router.run("discover")
-        interaction.click.assert_not_called()
+        controller.click.assert_not_called()
 
     def test_themes_select_templates_without_locator_branches(self):
         # 测试注册机制；复用资源不表示已经制作浅色皮肤模板。
@@ -125,16 +152,24 @@ class UiArchitectureTests(unittest.TestCase):
         screenshotter.capture.return_value = self.frame
         locator = MagicMock()
         locator.locate.return_value = None
-        interaction = UiInteractor(driver, screenshotter, locator)
+        interaction = UiController(
+            driver,
+            screenshotter,
+            locator,
+            MagicMock(),
+            ControllerConfig(capture_attempts=1, locate_attempts=1),
+        )
         interaction.capture(follow_foreground=True)
         driver.follow_foreground.assert_called_once()
         driver.verify_capture.assert_called_once_with(
             driver.prepare_capture.return_value
         )
-        with self.assertRaises(RuntimeError):
-            interaction.click(self.frame, "missing")
+        result = interaction.click("missing")
+        self.assertEqual(result.status, "failed")
         driver.click.assert_not_called()
-        self.assertEqual(interaction.artifacts(), [self.frame.image_path])
+        self.assertEqual(
+            interaction.artifacts(), [self.frame.image_path, self.frame.image_path]
+        )
         interaction.reset()
         self.assertEqual(interaction.artifacts(), [])
 
@@ -150,9 +185,7 @@ class UiArchitectureTests(unittest.TestCase):
         )
         interaction = MagicMock()
         interaction.capture.return_value = self.frame
-        interaction.locate.side_effect = lambda frame, name: (
-            MagicMock() if name == "moments_entry" else None
-        )
+        interaction.detect_page.return_value = "home"
         router = PageRouter(interaction, self.pages, RouteConfig())
         with self.assertRaisesRegex(ValueError, "未验证页面"):
             router.run("later_action")
@@ -207,6 +240,8 @@ class UiArchitectureTests(unittest.TestCase):
         received = []
 
         class CustomCollector(PseudoCollector):
+            """接收任意专属参数，验证新增采集器不需要修改应用配置模型。"""
+
             def __init__(self, custom):
                 received.append(custom)
                 super().__init__()

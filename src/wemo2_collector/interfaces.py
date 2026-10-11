@@ -4,7 +4,16 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 from wemo2.models import Observation
-from wemo2_collector.models import LocatedTarget, Screenshot, Surface, TextBlock
+from wemo2_collector.models import (
+    ActionResult,
+    Direction,
+    Expectation,
+    LocatedTarget,
+    Screenshot,
+    Surface,
+    TextBlock,
+    ValidationResult,
+)
 from wemo2_collector.themes import TemplateSpec
 
 
@@ -36,8 +45,14 @@ class BaseDriver(ABC):
         """校验帧、目标窗口和坐标范围，再转换为平台坐标执行点击。"""
 
     @abstractmethod
-    def scroll(self, surface: Surface, distance: int) -> None:
-        """在已验证的内容区域内滚动；距离以平台适配器约定的像素表示。"""
+    def swipe(
+        self,
+        frame: Screenshot,
+        target: LocatedTarget,
+        direction: Direction,
+        distance: int,
+    ) -> None:
+        """在定位的区域内滑动，距离为物理像素，端点必须位于区域内。"""
 
     @abstractmethod
     def close(self) -> None:
@@ -106,21 +121,75 @@ class BaseImageMatcher(ABC):
         """返回可靠且唯一的匹配，低分或歧义返回 None。"""
 
 
-class BaseInteractor(ABC):
-    """组合截图、定位和平台动作；路由只依赖该接口。"""
+class BaseValidator(ABC):
+    """独立校验器，不执行截图、鼠标或键盘动作。"""
+
+    @abstractmethod
+    def validate_frame(self, frame: Screenshot) -> None:
+        """校验时效和实际图片，异常时拒绝后续操作。"""
+
+    @abstractmethod
+    def validate_target(self, frame: Screenshot, target: LocatedTarget) -> None:
+        """校验帧归属、时效与目标范围。"""
+
+    @abstractmethod
+    def detect_page(self, frame: Screenshot) -> str:
+        """根据注册页面标志识别状态。"""
+
+    @abstractmethod
+    def evaluate(
+        self, before: Screenshot, after: Screenshot, expectation: Expectation
+    ) -> ValidationResult:
+        """校验页面预期或区域进展，不把无法验证当作成功。"""
+
+
+class BaseController(ABC):
+    """规范截图、定位、输入及观察验证的控制器；输入动作最多执行一次。"""
+
+    @abstractmethod
+    def reset(self) -> None:
+        """开始新一轮证据收集，不删除历史文件。"""
 
     @abstractmethod
     def capture(self, *, follow_foreground: bool = False) -> Screenshot:
-        """验证并截图，可按需跟随同一会话的前台窗口。"""
+        """有限重试截图与校验，失败明确报错。"""
 
     @abstractmethod
-    def locate(self, frame: Screenshot, name: str) -> LocatedTarget | None:
-        """查找语义目标，不执行动作。"""
+    def locate(
+        self, name: str, frame: Screenshot | None = None
+    ) -> LocatedTarget | None:
+        """无帧时自动截图，有帧时检查有效性；不执行输入动作。"""
 
     @abstractmethod
-    def click(self, frame: Screenshot, name: str) -> LocatedTarget:
-        """先定位、再校验、最后点击，不允许失败后使用固定坐标。"""
+    def detect_page(self, frame: Screenshot) -> str:
+        """委托校验器识别页面。"""
+
+    @abstractmethod
+    def click(
+        self,
+        name: str,
+        expectation: Expectation | None = None,
+        *,
+        source_page: str | None = None,
+        timeout: float | None = None,
+        settle_seconds: float = 0.2,
+        follow_foreground: bool = False,
+    ) -> ActionResult:
+        """获取新截图、定位、校验、点击一次，再等待并验证预期。"""
+
+    @abstractmethod
+    def swipe(
+        self,
+        name: str,
+        direction: Direction,
+        distance: int,
+        expectation: Expectation | None = None,
+        *,
+        timeout: float | None = None,
+        settle_seconds: float = 0.2,
+    ) -> ActionResult:
+        """定位操作区域、校验、滑动一次，再等待并验证预期。"""
 
     @abstractmethod
     def artifacts(self) -> list[Path]:
-        """返回本次会话截图证据文件。"""
+        """返回截图与动作证据文件。"""

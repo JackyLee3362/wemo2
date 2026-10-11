@@ -17,7 +17,8 @@ Windows 截图阶段已经实现，注册名 `windows_screenshot`，通过 `wemo
 `BaseCollector.artifacts()` 与 `RunResult.artifacts` 交付实际保存的证据路径。
 
 界面采集器内部设计见 [wemo2_collector 架构](src/wemo2_collector/ARCHITECTURE.md)。
-新包定义平台驱动、页面路由器、截图器、定位器、文字识别器和动态读取器的抽象接口。
+新包定义平台驱动、页面路由器、控制器、校验器、截图器、定位器、文字识别器和动态读取器的抽象接口。
+控制器统一操作协议并交付结构化 ActionResult；动作状态和截图细节不进入应用数据契约。
 页面、主题、模板、窗口和截图配置由 `wemo2_collector` 独立维护。
 应用层只传递 `collector_options` 字典与配置目录，通过注册的 `prepare_options` 委托
 实现方校验与解析；数据源平台也属于专属配置。Windows 已实现截图及导航，Android 尚未实现。

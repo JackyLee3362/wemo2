@@ -9,6 +9,8 @@ from wemo2_collector.windows.backend import AirtestLogHandler, create_device
 
 
 class AirtestBackendTests(unittest.TestCase):
+    """验证 Airtest 日志转接与延迟加载，确保普通 CLI 启动不连接平台设备。"""
+
     def test_device_logs_use_loguru_instead_of_terminal_handler(self):
         windows = MagicMock()
         airtest_logger = logging.getLogger("airtest")

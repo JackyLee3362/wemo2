@@ -6,6 +6,11 @@ from wemo2_collector.themes import ThemeRegistry
 
 
 class RegistryLocator(BaseLocator):
+    """根据当前主题解析语义目标的模板，委托图片匹配器返回定位结果。
+
+    不包含具体页面分支，也不执行截图或点击。
+    """
+
     def __init__(self, themes: ThemeRegistry, theme: str, matcher: BaseImageMatcher):
         themes.get(theme)
         self.themes = themes

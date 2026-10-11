@@ -31,7 +31,7 @@ line-length = 88
 extend-exclude = [".uv-python"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B", "D101", "D106"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["wemo2", "wemo2_collector"]

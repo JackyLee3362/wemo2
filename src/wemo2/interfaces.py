@@ -9,6 +9,8 @@ from wemo2.models import Action, Decision, Observation, Post, SavedObservation
 
 
 class BaseCollector(ABC):
+    """采集器契约：输出统一的 Observation，并提供停止和证据交付接口。"""
+
     def artifacts(self) -> list[Path]:
         """本次采集保存的证据文件；不规定文件格式或采集技术。"""
         return []
@@ -23,6 +25,8 @@ class BaseCollector(ABC):
 
 
 class BaseStore(ABC):
+    """存储器契约：提供事务、身份查询和动态保存，管理存储资源。"""
+
     @abstractmethod
     def transaction(self) -> AbstractContextManager[None]:
         """包裹匹配与保存，失败时回滚当前记录的写入。"""
@@ -57,6 +61,8 @@ class BaseStore(ABC):
 
 
 class BaseDeduplicator(ABC):
+    """去重器契约：根据采集记录和已有索引返回决定，不修改存储。"""
+
     @abstractmethod
     def resolve(self, observation: Observation, store: BaseStore) -> Decision:
         """只查询存储并返回去重决定，不执行写入。"""

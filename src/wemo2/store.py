@@ -13,6 +13,11 @@ from wemo2.models import Action, Content, Decision, Observation, Post, SavedObse
 
 
 class SQLiteStore(BaseStore):
+    """使用 SQLite 持久化原始采集记录、动态内容、修订和身份索引。
+
+    按去重决定执行保存，通过事务保证匹配与写入的一致性。
+    """
+
     def __init__(self, path: str | Path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

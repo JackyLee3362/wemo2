@@ -12,6 +12,8 @@ from wemo2.config import load_config
 
 
 class ConfigTests(unittest.TestCase):
+    """验证配置优先级、路径基准、CLI 选项、文件日志和启动失败处理。"""
+
     def parse_cli(self, args):
         with patch("wemo2.app.launch") as application:
             result = CliRunner().invoke(cli, args)

@@ -23,8 +23,9 @@
 | ThemeRegistry | themes.py | 注册主题，把语义目标映射为模板、参考缩放和搜索区域 |
 | TemplateMatcher / BaseImageMatcher | matching.py / interfaces.py | 只匹配图片，返回局部矩形和分数；不点击 |
 | RegistryLocator / BaseLocator | locating.py / interfaces.py | 根据主题找到模板，委托匹配器处理 |
-| UiInteractor / BaseInteractor | interaction.py / interfaces.py | 截图、定位、记录证据和调用经过校验的点击 |
-| PageRouter / BasePageRouter | routing.py / interfaces.py | 根据注册数据识别状态、寻找路径并验证跳转 |
+| UiController / BaseController | controller.py / interfaces.py | 规范截图、定位、单次输入、操作后等待、重试及动作证据 |
+| UiValidator / BaseValidator | validation.py / interfaces.py | 独立校验截图、目标、页面预期和内容区域变化 |
+| PageRouter / BasePageRouter | routing.py / interfaces.py | 查找注册路径、指定目标及预期、委托控制器执行 |
 | WindowsDriver / BaseDriver | windows/driver.py | Airtest 会话、焦点、坐标和输入操作 |
 | WindowsScreenshotter / BaseScreenshotter | windows/screenshot.py | 保存客户区 PNG 和截图元数据，拒绝黑屏/异常尺寸 |
 | WindowsScreenshotCollector | collector.py | 组装上述组件，编排一次采集并释放会话 |
@@ -35,10 +36,13 @@ flowchart LR
     App[wemo2 协调器] --> Collector[Collector]
     Collector --> Router[PageRouter]
     Router --> Pages[PageRegistry]
-    Router --> Interaction[UiInteractor]
-    Interaction --> Capture[Screenshotter]
-    Interaction --> Driver[Driver]
-    Interaction --> Locator[RegistryLocator]
+    Router --> Controller[UiController]
+    Controller --> Validator[UiValidator]
+    Validator --> Pages
+    Validator --> Locator[RegistryLocator]
+    Controller --> Capture[Screenshotter]
+    Controller --> Driver[Driver]
+    Controller --> Locator
     Locator --> Themes[ThemeRegistry]
     Locator --> Matcher[ImageMatcher]
     Collector --> Data[Observation 与证据文件]
@@ -124,3 +128,52 @@ Airtest 延迟导入，其日志转交 Loguru 文件 sink，帮助和版本不�
 测试使用静态模板及模拟平台组件，覆盖低分、歧义、旧帧、坐标偏移、未知页、超时、
 页面/主题扩展、配置边界和资源释放。真实微信、多显示器与皮肤仍需实际联调。
 截图和朋友圈调试入口保持可用；点击后页面未验证时日志明确标注待验证。
+
+## 7. 控制器的标准动作协议
+
+旧 `UiInteractor` 已由 `UiController` 替代，不保留职责重复的实现。
+`PageRouter` 不再维护等待/重试循环，也不直接调用 Driver。
+它只规划路径，并把目标、源页面前置条件和目标页面预期交给控制器。
+
+- `capture()`：准备窗口 → 截图 → 校验窗口与实际图片 → 记录证据。
+- `locate(name)`：自动截图 → 定位 → 校验帧归属、时效与目标范围。
+- `click(name, expectation)`：新截图 → 校验源页面 → 定位 → 校验 → 点击一次 → 等待重绘 → 重新截图与验证。
+- `swipe(name, direction, distance, expectation)`：定位操作区域 → 校验 → 区域内拖动一次 → 重新截图与验证。
+
+点击和滑动返回 Pydantic `ActionResult`：
+
+| status | 含义 |
+| --- | --- |
+| executed | 平台动作正常返回，未提供验证预期，不宣称页面成功 |
+| verified | 平台动作正常返回，且指定预期通过验证 |
+| pending | 平台动作正常返回，但目标页尚无验证特征 |
+| failed | 截图、定位、输入、验证或证据保存失败 |
+
+`attempted` 表示已经调用平台动作；若调用抛错，可能部分执行，不能自动重发。
+`executed` 表示平台调用正常返回；后续截图失败或验证超时仍保留 True。
+结果包含动作前后截图、定位位置、滑动方向/距离、预期、校验结果、错误及证据路径。
+每次输入动作保存 `action_<UUID>.json` 到截图目录，失败时同样保存；磁盘写入失败会明确报错。
+证据文件只记录本次动作的截图路径，不复制已有图片。
+
+页面路由收到 failed 后通过 `UiActionError.result` 保留结构化失败并终止导航。
+未验证的朋友圈菜单动作返回 pending；调用方不能据此假设已经进入动态列表。
+调试时可查看 `collector.controller.results` 和 `router.last_result`。
+
+`Expectation(kind="page", page="discover")` 使用注册页面标志。
+`Expectation(kind="change", region=Rect(...))` 比较指定内容区域的变化比例，
+不将窗口切换、通知区域变化或整幅画面重复当作已经到底；窗口/区域变化时拒绝比较。
+应为滑动提供真实内容区域，默认整图变化只能证明像素发生变化，不能证明动态翻页成功。
+Windows 的 Airtest swipe 是鼠标拖动；目前没有实现朋友圈滚轮翻页、到底判断或滑动路由。
+
+```toml
+[collector_options.controller]
+capture_attempts = 2
+locate_attempts = 2
+poll_interval = 0.2
+verification_timeout = 5
+max_frame_age = 5
+```
+
+截图和定位仅在输入之前有限重试；验证时只重新观察，不再次点击或拖动。
+页面路由的 timeout_seconds 可覆盖单次动作验证等待；settle_seconds 来自路由注册数据。
+配置仍属于采集器，核心 wemo2 不读取这些字段。

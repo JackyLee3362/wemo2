@@ -13,6 +13,8 @@ from wemo2.pseudo import PseudoCollector, PseudoDeduplicator, PseudoStore
 
 
 class ComponentTests(unittest.TestCase):
+    """验证抽象接口、不同实现的组合、模拟事务及返回模型的隔离性。"""
+
     def test_interfaces_cannot_be_instantiated(self):
         for component in (BaseCollector, BaseDeduplicator, BaseStore):
             with self.subTest(component=component), self.assertRaises(TypeError):
@@ -79,6 +81,8 @@ class ComponentTests(unittest.TestCase):
 
     def test_failed_save_rolls_back_memory_store(self):
         class FailingStore(PseudoStore):
+            """在修改内存存储后主动抛错，验证保存事务能够回滚。"""
+
             def save(self, observation, decision):
                 super().save(observation, decision)
                 raise RuntimeError("模拟保存失败")

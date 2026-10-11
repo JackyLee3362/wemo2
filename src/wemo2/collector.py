@@ -12,6 +12,11 @@ Collector = BaseCollector
 
 
 class JsonCollector(BaseCollector):
+    """从 JSON 文件校验并加载 Observation 列表，用于离线导入和流程测试。
+
+    不连接微信，也不负责去重或保存动态。
+    """
+
     def __init__(self, path: str | Path, platform: Platform = Platform.windows):
         self.path = Path(path)
         self.platform = Platform(platform)  # 导入场景仅记录目标平台，不访问设备。

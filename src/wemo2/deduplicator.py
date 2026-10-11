@@ -21,6 +21,11 @@ def canonical_json(value: object) -> str:
 
 
 class Deduplicator(BaseDeduplicator):
+    """通过采集记录 ID 保证幂等，通过稳定源 ID 判断动态身份。
+
+    只查询存储并返回 Decision，不按相同正文合并，也不执行写入。
+    """
+
     def resolve(self, observation: Observation, index: BaseStore) -> Decision:
         scope = observation.account_scope
         previous = index.get_observation(scope, observation.observation_id)

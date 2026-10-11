@@ -15,6 +15,8 @@ from wemo2.store import SQLiteStore
 
 
 class PipelineTests(unittest.TestCase):
+    """验证 JSON 导入、幂等、稳定源身份、内容修订及跨进程持久化契约。"""
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -136,6 +138,8 @@ class PipelineTests(unittest.TestCase):
         observation = Observation.model_validate(self.record)
 
         class MemoryCollector(BaseCollector):
+            """直接产出测试模型，验证采集器不依赖 JSON 文件也能接入协调器。"""
+
             def collect(self):
                 yield observation
 

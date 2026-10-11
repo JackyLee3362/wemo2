@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 from PIL import Image, ImageChops
@@ -17,7 +18,7 @@ class SavedMedia(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     path: Path
-    kind: str
+    kind: Literal["image", "video"]
     sha256: str
     size: int = Field(gt=0)
 
@@ -35,6 +36,10 @@ class CardCapture(BaseModel):
     partial_end: bool = False
     status: str = "processing"
     error: str | None = None
+    media_detection: Literal["not_requested", "none_detected", "candidates_found"] = (
+        "not_requested"
+    )
+    media_candidates: int = Field(default=0, ge=0)
 
 
 class MediaCapture:
@@ -52,6 +57,7 @@ class MediaCapture:
         self.reader = TextRecognizer()
         self.paths: list[Path] = []
         self.saved: dict[str, SavedMedia] = {}
+        self.last_saved: SavedMedia | None = None
 
     def _check(self, action):
         if action.status == "failed":
@@ -63,6 +69,7 @@ class MediaCapture:
     def _save_media(
         self, source: Screenshot, bounds: Rect, stream_y: int
     ) -> SavedMedia:
+        self.last_saved = None
         fresh = self.controller.capture()
         if fresh.surface != source.surface:
             raise RuntimeError("媒体定位后列表窗口发生变化，未点击")
@@ -77,9 +84,7 @@ class MediaCapture:
                         raise RuntimeError("媒体内容已变化，未使用旧坐标点击")
                 key = f"{stream_y}:{hashlib.sha256(first.tobytes()).hexdigest()}"
         if key in self.saved:
-            return self.saved[
-                key
-            ]  # 仅复用本次运行中相同预览的下载，不冒充动态身份去重。
+            return self.saved[key]  # 仅复用已验证重叠中的同位置媒体。
         viewer = self._check(
             self.controller.click_region(
                 "media_preview", bounds, follow_foreground=True
@@ -94,7 +99,9 @@ class MediaCapture:
             height=max(1, viewer.surface.bounds.height // 3),
         )
         menu = self._check(
-            self.controller.click_region("media_context", area, right=True)
+            self.controller.click_region(
+                "media_context", area, right=True, follow_foreground=True
+            )
         )
         with Image.open(menu.image_path) as image:
             lines = self.reader.read(image)
@@ -125,6 +132,7 @@ class MediaCapture:
             size=path.stat().st_size,
         )
         self.paths.append(path)
+        self.last_saved = saved
         self.controller.platform_step(
             "close_viewer", lambda: self.controller.driver.close_viewer(source.surface)
         )
@@ -163,6 +171,7 @@ class MediaCapture:
                     screenshot=path,
                     partial_start=index == 0,
                 )
+                self.last_saved = None
                 with full.crop(
                     (bounds.x, bounds.y, bounds.x + bounds.width, bottom)
                 ) as image:
@@ -174,7 +183,12 @@ class MediaCapture:
                                 image, frame.surface.scale
                             )
                         if self.config.save_media:
-                            for tile in media_tiles(image, frame.surface.scale):
+                            tiles = media_tiles(image, frame.surface.scale)
+                            card.media_candidates = len(tiles)
+                            card.media_detection = (
+                                "candidates_found" if tiles else "none_detected"
+                            )
+                            for tile in tiles:
                                 target = Rect(
                                     x=bounds.x + tile.x,
                                     y=bounds.y + tile.y,
@@ -195,6 +209,11 @@ class MediaCapture:
                         )
                         card.status = "failed"
                         card.error = str(error)
+                        if (
+                            self.last_saved is not None
+                            and self.last_saved not in card.media
+                        ):
+                            card.media.append(self.last_saved)
                         raise
                     finally:
                         metadata = path.with_suffix(".json")

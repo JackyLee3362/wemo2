@@ -33,6 +33,7 @@ class WindowsDriver(BaseDriver):
         self.device = None
         self.user32 = None
         self.previous_dpi = None
+        self.session_process_id: int | None = None
 
     def attach(self) -> Surface:
         if sys.platform != "win32":
@@ -92,6 +93,7 @@ class WindowsDriver(BaseDriver):
                 "找到多个微信窗口，请通过 window_process_id 指定目标进程"
             )
         self.device = create_device(handle=matches[0].handle, foreground=False)
+        self.session_process_id = matches[0].process_id
         return self.current_surface()
 
     def current_surface(self) -> Surface:
@@ -178,7 +180,9 @@ class WindowsDriver(BaseDriver):
             return
         original_pid = wintypes.DWORD()
         foreground_pid = wintypes.DWORD()
-        if not self.user32.GetWindowThreadProcessId(
+        if self.session_process_id is not None:
+            original_pid.value = self.session_process_id
+        elif not self.user32.GetWindowThreadProcessId(
             self.device.handle, ctypes.byref(original_pid)
         ):
             raise RuntimeError("无法读取原微信窗口进程")
@@ -188,6 +192,7 @@ class WindowsDriver(BaseDriver):
             raise RuntimeError("无法读取点击后的前台进程")
         if original_pid.value != foreground_pid.value:
             raise RuntimeError("点击后前台窗口不属于原微信进程，请检查微信界面")
+        self.session_process_id = original_pid.value
         from wemo2_collector.windows.backend import create_device
 
         new_device = create_device(handle=handle, foreground=False)
@@ -252,6 +257,7 @@ class WindowsDriver(BaseDriver):
                 self.device.screen.close()
         finally:
             self.device = None
+            self.session_process_id = None
             if self.previous_dpi is not None:
                 self.user32.SetThreadDpiAwarenessContext(self.previous_dpi)
                 self.previous_dpi = None

@@ -349,6 +349,8 @@ class UiController:
             value = action()
             result.executed = True
             result.status = "executed"
+            if isinstance(value, Path) and value.is_file():
+                self._artifacts.append(value)
             result.after = self.capture(follow_foreground=True)
         except Exception as error:
             logger.exception("媒体平台步骤 {} 失败，停止后续输入：{}", operation, error)

@@ -1,7 +1,7 @@
 # wemo2_collector 架构
 
-状态：Windows 使用 Airtest 完成截图、发现页导航、朋友圈菜单点击和选中状态验证。
-尚未完成朋友圈动态列表验证、OCR、动态解析、朋友圈滚动采集及 Android 适配。
+状态：Windows 已接入截图、发现页导航、朋友圈选中验证、锚点分段、昵称 OCR 及媒体另存为流程。
+实际媒体查看器与另存为操作仍需实机验证；完整动态解析、Observation 转换及 Android 适配尚未完成。
 
 ## 1. 精简后的边界
 
@@ -9,8 +9,8 @@
 界面采集包自行解释 `collector_options`，应用不读取窗口、主题、模板或截图字段。
 唯一组件登记处绑定采集器与 `prepare_options`；校验配置不启动设备或创建输出文件。
 
-采集包从 37 个类精简为 24 个，包括数据模型与配置模型。
-删除了单实现的内部抽象、两套注册器、独立匹配器和未实现的 OCR/卡片解析接口。
+采集包已删除单实现的内部抽象、两套注册器、独立匹配器和未实现的 OCR/卡片解析接口。
+新增实际使用的 FeedCapture、TextRecognizer、MediaCapture 及数据模型，不预先增加空接口。
 保留核心 BaseCollector 与平台 BaseDriver；未来确实出现第二种实现时再抽取其他接口。
 
 | 部分 | 文件 | 职责 |
@@ -19,6 +19,9 @@
 | AirtestLocator | locating.py | 直接调用 Airtest 匹配，补充范围、DPI 与唯一目标检查 |
 | UiController | controller.py | 规范截图、定位、单次输入、等待、结果与证据 |
 | PageRouter | routing.py | 查询路径，将目标、前置页面和预期交给控制器 |
+| FeedCapture | feed.py | 有上限的滚动采集、重叠验证、拼接和锚点切分 |
+| TextRecognizer | recognition.py | 调用 RapidOCR 识别昵称和另存为菜单 |
+| MediaCapture | media.py | 可见卡片识别、媒体保存流程及文件关联 |
 | 校验函数 | validation.py | 共用截图、目标、页面及区域变化校验 |
 | WindowsDriver | windows/driver.py | Airtest 会话、物理坐标、焦点与输入 |
 | WindowsScreenshotter | windows/screenshot.py | 截取客户区，按配置时区保存 PNG 和元数据 |
@@ -108,7 +111,7 @@ Airtest 图像与设备模块延迟加载，日志统一转入 Loguru 文件 sin
 
 校验函数复用同一份尺寸、黑屏、时效与范围规则；输入前仍重新核对窗口和焦点。
 区域变化预期只比较选定像素区域，不能据此判断真实动态翻页或已经到底。
-Windows swipe 是鼠标拖动，目前没有朋友圈滚轮翻页路由。
+Windows swipe 是鼠标拖动；FeedCapture 使用独立的 scroll 动作调用 Airtest 鼠标后端滚轮。
 
 ## 5. 配置与截图
 
@@ -153,7 +156,35 @@ timezone 保存 IANA 名称。ZoneInfo + tzdata 提供 Windows 时区数据，�
 
 ## 6. 数据解析与验证
 
-当前采集器输出空 Observation 列表和界面证据，不生成假朋友圈数据。
+当前采集器输出空 Observation 列表、本地截图、卡片清单和实际另存为文件，不生成假朋友圈数据。
+
+## 7. 锚点分段与媒体采集
+
+`FeedCaptureConfig` 全部由采集包维护。`enabled=false` 保持单次截图/导航；
+朋友圈调试 TOML 开启滚动、昵称和媒体保存，默认最多 20 帧。
+
+1. 在配置的列表区域执行 `locate_all("moments_anchor")`，重复锚点按纵坐标排序。
+2. 以按钮下沿及 DPI 留白切分。首尾未闭合部分标记 partial，不冒充完整动态。
+3. 滚动由 UiController 发出一次 scroll，校验区域变化并保存前后截图和动作结果。
+4. Airtest 匹配上一视口底部与新视口的内容；唯一重叠才可拼接，仅追加新露出的像素。
+5. 重叠无法确认、首次无锚点、无进展或达到上限时停止，保留原图及清单。
+
+`TextRecognizer` 通过 RapidOCR 获取行文本、范围和置信度。昵称采用动态顶部蓝色文本
+与邻近头像布局，无法确认则保持未知。模型延迟加载，日志转发 Loguru。
+昵称、预览内容和位置均不能生成微信稳定源身份。
+
+`MediaCapture` 按可见锚点保存卡片和 JSON，以 OpenCV 连通区域发现深色页面媒体候选。
+点击前重拍并比较候选区域，内容发生变化则拒绝使用旧位置。进入同进程独立查看器，
+右键后 OCR 唯一定位另存为菜单，再进入标准 Windows 对话框。文件名使用 UUID，
+输入框不唯一时停止。记录非空、稳定文件的类型、大小和 SHA-256，再返回原列表。
+同一次采集中，仅相邻截图已确认重叠且流坐标相同的媒体可复用保存结果。
+
+截图及输入统一经过控制器；文件对话框的控件操作只在 WindowsDriver 内，
+复用 Airtest 已带的 pywinauto Win32 后端，不引入 UI Automation 后端。
+保存成功后截图或返回失败，仍保留文件路径和 executed 事实，不重复下载输入。
+图片检查可解码性；视频目前仅检查容器头，完整播放及最高质量原图尚需另行核验。
+卡片的 `media_detection=none_detected` 表示未识别到候选，不表示动态肯定没有媒体。
+菜单/另存为协议的实机兼容性仍需 F5 验证，视频特有的保存界面可能需要补充适配。
 未来 OCR 和卡片解析按实际需求实现，届时继续输出核心 Observation 契约。
 重复由去重器判断，UI 层不将截图重复当作动态重复。
 

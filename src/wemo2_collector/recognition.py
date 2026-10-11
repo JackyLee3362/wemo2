@@ -71,6 +71,22 @@ class TextRecognizer:
                 if line.score < 0.8:
                     continue
                 bounds = line.bounds
+                # 邻近头像提供布局约束，避免跨屏片段中的蓝色海报文字冒充昵称。
+                avatar_left = bounds.x - round(50 * scale)
+                avatar_top = max(0, bounds.y - round(5 * scale))
+                avatar_size = round(40 * scale)
+                if avatar_left < 0 or avatar_top + avatar_size > header.height:
+                    continue
+                with header.crop(
+                    (
+                        avatar_left,
+                        avatar_top,
+                        avatar_left + avatar_size,
+                        avatar_top + avatar_size,
+                    )
+                ).convert("L") as avatar:
+                    if np.array(avatar).std() < 15:
+                        continue
                 with header.crop(
                     (
                         bounds.x,

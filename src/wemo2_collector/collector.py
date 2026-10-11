@@ -18,7 +18,8 @@ from wemo2_collector.windows.screenshot import WindowsScreenshotter
 class WindowsScreenshotCollector(BaseCollector):
     """组装 Windows 驱动、截图器、Airtest 定位器、控制器和页面路由器。
 
-    编排一次截图或导航，交付界面证据并释放会话；当前尚不解析朋友圈动态。
+    编排导航、分段截图、昵称识别和媒体保存；交付本地证据并释放会话。
+    当前尚不把视觉卡片转换为带稳定身份的朋友圈 Observation。
     """
 
     def __init__(self, config: WindowsCollectorConfig):

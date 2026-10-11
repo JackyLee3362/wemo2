@@ -73,18 +73,27 @@ class FeedCapture:
                 (region.x, region.y, region.x + region.width, region.y + region.height)
             ).convert("RGB")
 
-    def _save(self, height: int, anchor: LocatedTarget | None) -> None:
+    def _save(
+        self, height: int, anchor: LocatedTarget | None, recognize: bool = True
+    ) -> None:
         if self.pending is None or height <= 0:
             return
         path = self.directory / f"segment_{len(self.result.segments) + 1:04d}.png"
         with self.pending.crop((0, 0, self.pending.width, height)) as image:
             image.save(path)
+            nickname = None
+            if recognize and self.media is not None and self.config.recognize_nickname:
+                nickname = self.media.reader.nickname(
+                    image, self.result.frames[-1].surface.scale
+                )
         segment = FeedSegment(
             image_path=path,
             source_frames=list(self.pending_frames),
             partial_start=self.partial_start,
             partial_end=anchor is None,
             end_anchor=anchor,
+            nickname=None if nickname is None else nickname.text,
+            nickname_score=None if nickname is None else nickname.score,
         )
         self.result.segments.append(segment)
         self.paths.append(path)
@@ -94,7 +103,7 @@ class FeedCapture:
         self.pending.close()
         self.pending = remainder
         self.partial_start = False
-        self.pending_frames = self.pending_frames[-1:]
+        # 保留来源帧的完整上界，避免跨屏余段丢失早先帧的证据引用。
 
     def _append(
         self,
@@ -181,6 +190,7 @@ class FeedCapture:
                         and action.error.startswith("动作后验证超时")
                     ):
                         self.result.stop_reason = "no_progress"
+                        self.result.frames.append(action.after)
                         break
                     raise UiActionError(action)
                 if action.after is None:
@@ -195,7 +205,7 @@ class FeedCapture:
             if previous is not None:
                 previous.close()
             if self.pending is not None:
-                self._save(self.pending.height, None)
+                self._save(self.pending.height, None, recognize=False)
                 self.pending.close()
                 self.pending = None
             path = self.directory / "manifest.json"

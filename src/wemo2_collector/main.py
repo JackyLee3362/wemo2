@@ -41,7 +41,9 @@ def main(config_path: Path | None = None) -> None:
         try:
             paths = run_collector(config)
             console.print(
-                Text("当前只调试界面采集，页面验证结果见日志，尚不解析动态。")
+                Text(
+                    "界面采集已完成，截图、识别及媒体结果见证据清单；尚未接入动态持久化。"
+                )
             )
             for path in paths:
                 console.print(Text(f"证据已保存：{path}"))

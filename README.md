@@ -3,7 +3,7 @@
 朋友圈备份工具，使用 Python 实现自动采集、去重与持久化。
 
 - 支持平台：Windows
-- 采集源配置位于 `[collector_options]`；已实现 Windows 截图与导航，Android 尚未实现。
+- 采集源配置位于 `[collector_options]`；已实现 Windows 截图、导航、锚点分段、昵称 OCR 和媒体另存为流程，Android 尚未实现。
 - 首版交互：CLI；Tkinter 界面留待后续实现。
 - 日志：Loguru
 - 命令行：Typer
@@ -34,6 +34,7 @@ uv run wemo2 --config wemo2.moments.toml
 VS Code 可选择“wemo2_collector: 调试朋友圈路由”按 F5。
 默认先验证发现菜单，再定位并点击“朋友圈”一行，验证绿色背景、白色图标和文字的选中样式。
 如果已选中朋友圈，则保存当前截图并跳过点击。
+`wemo2.moments.toml` 还会继续按锚点截图、识别昵称和执行媒体另存为；默认最多 20 帧。
 已在发现页时不重复点击指南针；匹配不唯一或跳转超时会报错。
 
 页面、主题、模板及导航关系统一在 `src/wemo2_collector/profiles.py` 的 `UiProfile` 中维护。
@@ -279,7 +280,7 @@ F5 调试入口保持不变。截图目录除 PNG/截图元数据外，还会生
 验证超时或操作后截图失败时，也能从文件判断输入是否已经执行。
 朋友圈菜单点击后验证 `moments_selected`（绿色选中行），成功返回 `verified`；
 超时返回 `failed` 并保存证据，不重复点击。该状态只确认菜单选中，动态列表尚未验证。
-Windows 滑动为区域内鼠标拖动，朋友圈滚动采集仍未接入。
+Windows `swipe` 是区域内鼠标拖动；朋友圈翻页使用独立的滚轮 `scroll` 动作。
 控制器参数可放在 `[collector_options.controller]`，详细协议见采集器架构。
 
 截图时区通过 `[collector_options] timezone = "Asia/Shanghai"` 配置，默认上海时间。
@@ -287,6 +288,61 @@ Windows 滑动为区域内鼠标拖动，朋友圈滚动采集仍未接入。
 `timezone` 保留 IANA 名称。可改为 `UTC` 或其他有效 IANA 时区；无效名称在启动时拒绝。
 
 所有捕获异常均写入错误日志并保留堆栈，包括重试、跳过和回滚分支。
+
+## 朋友圈截图、昵称与媒体
+
+默认朋友圈调试配置已开启这三步；也可在配置中分别关闭昵称识别或媒体保存：
+
+```toml
+[collector_options.feed]
+enabled = true
+max_screens = 20
+wheel_steps = 1
+settle_seconds = 0.6
+timeout_seconds = 2
+recognize_nickname = true
+save_media = true
+```
+
+列表区域建议配置为客户区截图中的实际物理像素范围，避免侧栏和固定页头影响拼接。
+没有配置时使用整窗；不能把用户提供的局部截图尺寸直接当作真实窗口范围。
+
+```toml
+# 以下仅为区域配置格式示例，数值需要按实际窗口调整。
+[collector_options.feed.region]
+x = 0
+y = 0
+width = 639
+height = 663
+```
+
+输出仍位于 `data/screenshot`：
+
+- 整窗原始截图、元数据及 `action_*.json` 保留每次操作证据。
+- `feed_<UUID>/segment_*.png` 是按“··”锚点切分的图像；`manifest.json` 记录来源帧、昵称、完整度和停止原因。
+- `cards_<UUID>/card_*.png/json` 记录当前可见卡片、OCR 昵称和实际媒体文件；`media/asset_*` 保存查看器另存为的文件。
+
+每次只向下滚动一个滚轮步长，使用 Airtest 验证相邻视口的内容重叠，再拼接和切分。
+无法验证重叠、首次未找到锚点、没有滚动进展或达到上限即停止，原始截图仍保留。
+`no_progress` 不等于已确认到底；首尾未闭合片段使用 `partial_start/partial_end` 标记。
+“··”的下沿加留白是当前约定切分线，评论等内容未必在同一段中；长动态可能需要跨屏拼接。
+
+昵称使用 RapidOCR 识别动态顶部蓝色文本，并检查邻近头像布局；保存原文、置信度和截图。
+表情或罕见字可能遗漏，无法确认时保持为空，不把昵称当作作者 ID。
+媒体区域目前按深色页面的连通图像块识别，无法可靠识别的候选不自动保存。
+
+媒体流程是 **点击预览 → 独立查看器 → 右键 → OCR 定位“另存为” → 标准 Windows 另存为对话框 → 校验文件 → 返回原列表**。
+保存使用唯一文件名，不覆盖已有文件；保存后记录文件大小、实际类型和 SHA-256。
+图片校验可解码性，视频检查容器文件头，不保证已完成播放验证。
+输出为微信查看器实际另存为的文件，截图不能证明其为最高分辨率原图。
+目前要求同进程独立查看器和可唯一识别文件名输入框的标准对话框；不符合时停止并保留证据。
+不会在未识别的菜单或对话框中猜坐标，也不会重发失败输入。
+
+采集器目前输出这些本地证据及结构化清单，尚未将视觉卡片转换为 Observation 或接入 Memos。
+[RapidOCR](https://rapidai.github.io/RapidOCRDocs/main/en/install_usage/rapidocr/usage/)
+和 ONNX Runtime 延迟加载，help/version 不加载模型。项目通过
+[uv 排除重复依赖](https://docs.astral.sh/uv/reference/settings/#exclude-dependencies)，
+排除 `opencv-python-headless`，共用 Airtest 已安装的 OpenCV，避免覆盖同一 `cv2` 模块。
 配置加载或正式日志路径初始化失败时，异常先写入 `logs/wemo2.log` 的启动日志；
 默认目录不可写时改用系统临时目录中的 `wemo2/startup.log`，错误提示会显示实际日志路径。
 帮助和版本不会创建日志。

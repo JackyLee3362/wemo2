@@ -158,6 +158,8 @@ class FeedSegment(BaseModel):
     partial_start: bool
     partial_end: bool
     end_anchor: LocatedTarget | None = None
+    nickname: str | None = None  # OCR 原文；不用于作者稳定身份或去重。
+    nickname_score: float | None = Field(default=None, ge=0, le=1)
 
 
 class FeedCaptureResult(BaseModel):

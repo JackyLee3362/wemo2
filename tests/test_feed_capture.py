@@ -966,6 +966,7 @@ class FeedCaptureTests(unittest.TestCase):
         dialog.descendants.return_value = [MagicMock(), MagicMock()]
         for edit in dialog.descendants.return_value:
             edit.class_name.return_value = "Edit"
+            edit.control_id.return_value = 1001
         with (
             patch.object(driver, "verify_capture"),
             patch.object(driver, "current_surface"),
@@ -1001,6 +1002,7 @@ class FeedCaptureTests(unittest.TestCase):
         driver.device.handle = 123
         driver.user32 = MagicMock()
         driver.user32.GetForegroundWindow.return_value = 456
+        driver.user32.IsWindow.return_value = False
 
         def process_id(handle, pointer):
             pointer._obj.value = 42
@@ -1023,19 +1025,26 @@ class FeedCaptureTests(unittest.TestCase):
         button = MagicMock()
         button.class_name.return_value = "Button"
         button.control_id.return_value = 1
+        button.handle = 789
         dialog.descendants.return_value.append(button)
 
-        def save():
-            destination = Path(edit.set_edit_text.call_args.args[0]).with_suffix(".png")
-            destination.write_bytes(self.first.image_path.read_bytes())
+        def send(handle, message, timeout):
+            if message == 0x00F5:  # BM_CLICK；WM_NULL 只探测响应，不能产生文件。
+                destination = Path(edit.set_edit_text.call_args.args[0]).with_suffix(
+                    ".png"
+                )
+                destination.write_bytes(self.first.image_path.read_bytes())
 
-        button.click.side_effect = save
         old_device = driver.device
         with (
             patch.object(driver, "verify_capture"),
             patch.object(driver, "current_surface"),
             patch("pywinauto.Desktop") as desktop,
             patch("wemo2.collectors.windows.backend.create_device") as create,
+            patch(
+                "wemo2.collectors.windows.backend.send_control_message",
+                side_effect=send,
+            ) as message,
             patch("wemo2.collectors.windows.driver.time.sleep"),
         ):
             desktop.return_value.window.return_value.wrapper_object.return_value = (
@@ -1048,7 +1057,9 @@ class FeedCaptureTests(unittest.TestCase):
         search.set_edit_text.assert_not_called()
         toolbar.set_edit_text.assert_not_called()
         old_device.keyevent.assert_not_called()
-        button.click.assert_called_once()
+        self.assertEqual(message.call_args_list[0].args[:2], (789, 0))
+        self.assertEqual(message.call_args_list[1].args[:2], (789, 0x00F5))
+        button.click.assert_not_called()
         old_device.screen.close.assert_called_once()
         create.assert_called_once_with(handle=456, foreground=False)
 

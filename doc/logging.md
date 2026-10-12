@@ -33,7 +33,7 @@ uv run wemo2 collect --config wemo2.moments.toml --log-file logs/debug.log
 | 滚动采集、拼接 | 屏数、锚点数量、新增像素、停止原因及清单 | FeedCapture |
 | 人物识别、卡片留痕 | 识别结果、截图/元信息路径、卡片状态 | MediaCapture |
 | 媒体流程、媒体加载 | 当前步骤、前置/后置状态、等待时间及上限 | UiController |
-| 另存为 | Windows 控件确认、单次提交、文件写入稳定及路径 | WindowsDriver |
+| 另存为、另存为提交、另存为等待 | 控件就绪重试、消息调用返回、对话框及文件状态、剩余时间、稳定文件及路径 | WindowsDriver |
 | 媒体保存 | 已验证重叠的文件复用、类型/大小/哈希、文件和查看器校验结果 | MediaCapture |
 | 归档、归档去重、归档媒体 | 作者/日期/目录、已有记录复用、资源拷贝、JSON 写入及错误数量 | MomentArchive |
 
@@ -49,3 +49,13 @@ uv run wemo2 collect --config wemo2.moments.toml --log-file logs/debug.log
 - 实机存在两个微信实例，调试配置通过 window_process_id 选择已观察到的主窗口。进程号只用于本次调试，不写入正式配置。
 
 实机调试需要访问当前用户桌面；受限执行环境可能枚举不到微信窗口。多开时须先确认目标实例，再通过配置选择对应进程。
+
+## 2026-10-12 另存为等待修复
+
+原“通过 Windows 保存按钮提交一次，等待文件写入”日志打印在 `click()` 调用之前，不能证明系统已处理保存。原流程还缺少限时消息调用和等待过程日志，因此无法从这一行区分按钮无响应和文件尚未生成。
+
+当前保留 Windows 控件方案，以 `SendMessageTimeout(BM_CLICK)` 提交保存，并把控件准备、消息调用及文件轮询纳入共同等待预算。默认准备检查最多 3 次，单次消息最多 2 秒，共同预算 30 秒；通过 `[collector_options.save_dialog]` 调整。就绪检测失败记录异常及重试次数，提交返回后单独记录，再每 5 秒报告对话框是否打开、候选文件数、文件大小和剩余时间。超时抛错，由现有失败流程退出并留痕。
+
+只对就绪检查及无副作用的 `WM_NULL` 探测重试。Windows 消息超时不能证明动作未发生，已进入处理的消息可能仍会完成，所以 `BM_CLICK` 超时后继续观察、不自动重发。参见 [Microsoft 消息超时说明](https://devblogs.microsoft.com/oldnewthing/20110915-00/?p=9643/) 和 [SendMessageTimeout 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw)。
+
+本次实机验证：通过微信图片右键菜单打开“保存”窗口，再运行实际 `WindowsDriver.save_dialog()`。22:51:08 消息返回后对话框关闭，约 0.8 秒完成提交及稳定文件校验。得到 478154 字节 JPG，并通过 Pillow 图片完整性检查。文件保存在 `data/debug/save-dialog-20261012/media/asset_ff97330d-683b-49a0-a38f-8ddb37696bd3.jpg`，SHA-256 为 `dca0284cae04f6db0e05c8143ca8f71e3bb02e60915153f5ace587d435403286`。本次仅验证单张图片保存，未验证视频和完整多媒体批次。

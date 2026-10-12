@@ -168,6 +168,19 @@ class ActionResult(BaseModel):
     error: str | None = None
 
 
+class SaveDialogConfig(BaseModel):
+    """Windows 另存为的就绪重试和等待上限；保存消息结果不明时只观察，不重发。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    # 就绪探测、消息提交和文件轮询共用此等待预算。
+    timeout_seconds: float = Field(default=30, gt=0, le=120)
+    # 每次原生消息调用的等待上限，同时受剩余总预算限制。
+    message_timeout_seconds: float = Field(default=2, gt=0, le=5)
+    # 包含首次探测；只重试控件准备，不重复保存输入。
+    prepare_attempts: int = Field(default=3, ge=1, le=10, strict=True)
+    poll_interval: float = Field(default=0.2, gt=0, le=5)
+
+
 class FeedCaptureConfig(BaseModel):
     """按锚点分段截图的设置；region 为客户区物理像素，不是屏幕坐标。"""
 

@@ -17,6 +17,12 @@ theme = "dark"
 target = "moments_entry"
 timeout_seconds = 5
 
+[collector_options.save_dialog]
+timeout_seconds = 30 # 控件准备、消息提交和文件轮询共用的等待预算。
+message_timeout_seconds = 2 # 单次 Windows 消息的等待上限。
+prepare_attempts = 3 # 含首次检查；只重试就绪探测，不重复保存输入。
+poll_interval = 0.2
+
 [collector_options.feed]
 enabled = true
 max_screens = 20

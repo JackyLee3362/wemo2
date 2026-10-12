@@ -15,6 +15,7 @@ from wemo2.collectors.models import (
     LocatedTarget,
     Platform,
     Rect,
+    SaveDialogConfig,
     Screenshot,
     Surface,
 )
@@ -27,13 +28,20 @@ class WindowsDriver(BaseDriver):
     负责物理坐标、DPI、焦点及同进程窗口跟随；释放会话时不关闭用户微信。
     """
 
-    def __init__(self, window_title: str = "微信", process_id: int | None = None):
+    def __init__(
+        self,
+        window_title: str = "微信",
+        process_id: int | None = None,
+        *,
+        save_options: SaveDialogConfig | None = None,
+    ):
         self.window_title = window_title
         self.process_id = process_id
         self.device = None
         self.user32 = None
         self.previous_dpi = None
         self.session_process_id: int | None = None
+        self.save_options = save_options or SaveDialogConfig()
 
     def attach(self) -> Surface:
         """连接配置选定的微信实例，记录窗口选择结果以便排查多开情况。"""
@@ -314,15 +322,94 @@ class WindowsDriver(BaseDriver):
         self.device.keyevent(key)
 
     def save_dialog(self, directory: Path) -> Path:
-        """仅处理同进程标准另存为对话框；不猜测无法识别的文件输入框。"""
-        from pywinauto import Desktop
+        """限时准备控件、提交一次保存消息，再轮询对话框及实际文件，不猜测坐标。"""
+        from pywinauto import Desktop, win32defines
 
-        self.verify_capture(self.current_surface())
+        from wemo2.collectors.windows.backend import send_control_message
+
+        deadline = time.monotonic() + self.save_options.timeout_seconds
+        surface = self.current_surface()
+        self.verify_capture(surface)
         dialog = (
             Desktop(backend="win32").window(handle=self.device.handle).wrapper_object()
         )
         if not self.is_save_dialog():
             raise RuntimeError("未识别到标准另存为对话框，未输入文件名")
+        filename_edit, save_button = self._ready_save_controls(dialog, deadline)
+        directory.mkdir(parents=True, exist_ok=True)
+        prefix = f"asset_{uuid4()}"
+        destination = (directory / prefix).resolve()
+        logger.info(
+            "[另存为] 控件已就绪，输入框 ID=1001，保存按钮 ID=1，目标={}",
+            destination,
+        )
+        filename_edit.set_edit_text(str(destination))
+        process = wintypes.DWORD()
+        if not self.user32.GetWindowThreadProcessId(
+            self.device.handle, ctypes.byref(process)
+        ):
+            raise RuntimeError("无法校验另存为窗口进程")
+        dialog_handle = self.device.handle
+        self.verify_capture(surface)
+        if not save_button.is_enabled():
+            raise RuntimeError("另存为保存按钮变为不可用，未提交")
+        timeout = min(
+            self.save_options.message_timeout_seconds, deadline - time.monotonic()
+        )
+        if timeout <= 0:
+            raise RuntimeError("另存为超时：准备阶段耗尽等待时间，未提交保存")
+        logger.info("[另存为提交] 发送一次 BM_CLICK，消息等待上限 {:.1f} 秒", timeout)
+        try:
+            send_control_message(save_button.handle, win32defines.BM_CLICK, timeout)
+        except TimeoutError as error:
+            logger.exception(
+                "保存消息未确认处理结果，继续观察对话框和文件，不重复提交：{}", error
+            )
+        else:
+            logger.info("[另存为提交] 消息处理已返回，开始校验关闭状态和文件落盘")
+        return self._wait_saved_file(
+            directory, prefix, dialog_handle, process.value, deadline
+        )
+
+    def _ready_save_controls(self, dialog, deadline: float):
+        """对未就绪的控件和无副作用的响应探测有限重试，歧义或失去焦点则停止。"""
+        from pywinauto import win32defines
+
+        from wemo2.collectors.windows.backend import send_control_message
+
+        for attempt in range(self.save_options.prepare_attempts):
+            try:
+                self.verify_capture(self.current_surface())
+                filename_edits, save_buttons = self._find_save_controls(dialog)
+                if len(filename_edits) > 1 or len(save_buttons) > 1:
+                    raise RuntimeError("无法唯一识别标准文件名输入框或保存按钮，未输入")
+                if not filename_edits or not save_buttons:
+                    raise TimeoutError("文件名输入框或保存按钮尚未就绪")
+                timeout = min(
+                    self.save_options.message_timeout_seconds,
+                    deadline - time.monotonic(),
+                )
+                send_control_message(
+                    save_buttons[0].handle, win32defines.WM_NULL, timeout
+                )
+                return filename_edits[0], save_buttons[0]
+            except TimeoutError as error:
+                logger.exception(
+                    "另存为控件尚未就绪，第 {}/{} 次，等待后重新检查，未提交保存：{}",
+                    attempt + 1,
+                    self.save_options.prepare_attempts,
+                    error,
+                )
+                remaining = deadline - time.monotonic()
+                if attempt + 1 == self.save_options.prepare_attempts or remaining <= 0:
+                    raise RuntimeError(
+                        "另存为控件就绪重试耗尽或超时，未提交保存"
+                    ) from error
+                time.sleep(min(self.save_options.poll_interval, remaining))
+        raise RuntimeError("另存为控件未就绪")
+
+    def _find_save_controls(self, dialog) -> tuple[list, list]:
+        """只认标准可见且可用的控件 ID，忽略同名搜索框与工具栏。"""
         filename_edits = []
         save_buttons = []
         for edit in dialog.descendants():
@@ -339,43 +426,45 @@ class WindowsDriver(BaseDriver):
                 edit.class_name() == "Button"
                 and edit.control_id() == 1
                 and edit.is_visible()
+                and edit.is_enabled()
             ):
                 save_buttons.append(edit)
-        if len(filename_edits) != 1 or len(save_buttons) != 1:
-            raise RuntimeError("无法唯一识别标准文件名输入框或保存按钮，未输入")
-        directory.mkdir(parents=True, exist_ok=True)
-        prefix = f"asset_{uuid4()}"
-        destination = (directory / prefix).resolve()
-        logger.info(
-            "[另存为] 已确认 Windows 控件，文件名输入框 ID=1001，保存按钮 ID=1，目标={}",
-            destination,
-        )
-        # 标准对话框按所选文件类型补扩展名；唯一名称避免覆盖已有文件。
-        filename_edits[0].set_edit_text(str(destination))
-        process = wintypes.DWORD()
-        if not self.user32.GetWindowThreadProcessId(
-            self.device.handle, ctypes.byref(process)
-        ):
-            raise RuntimeError("无法校验另存为窗口进程")
-        dialog_handle = self.device.handle
-        if not save_buttons[0].is_enabled():
-            raise RuntimeError("另存为保存按钮尚不可用，未提交")
-        # 使用控件消息提交，不依赖系统配色、按钮坐标或当前键盘焦点。
-        logger.info("[另存为] 通过 Windows 保存按钮提交一次，等待文件写入")
-        save_buttons[0].click()
+        return filename_edits, save_buttons
+
+    def _wait_saved_file(
+        self,
+        directory: Path,
+        prefix: str,
+        dialog_handle: int,
+        process_id: int,
+        deadline: float,
+    ) -> Path:
+        """轮询关闭状态和稳定文件；等待有限且持续报告进度，不再次输入。"""
         last_size = None
-        for _ in range(150):
+        next_log = 0.0
+        while True:
+            now = time.monotonic()
+            dialog_open = bool(
+                self.user32.IsWindow(dialog_handle)
+                and self.user32.IsWindowVisible(dialog_handle)
+            )
             files = list(directory.glob(prefix + "*"))
+            size = None
             if len(files) == 1 and files[0].is_file():
                 size = files[0].stat().st_size
                 foreground = self.user32.GetForegroundWindow()
-                if size > 0 and size == last_size and foreground != dialog_handle:
+                if (
+                    size > 0
+                    and size == last_size
+                    and not dialog_open
+                    and foreground != dialog_handle
+                ):
                     active_process = wintypes.DWORD()
                     if (
                         not self.user32.GetWindowThreadProcessId(
                             foreground, ctypes.byref(active_process)
                         )
-                        or active_process.value != process.value
+                        or active_process.value != process_id
                     ):
                         raise RuntimeError("保存后前台窗口不属于原微信进程")
                     from wemo2.collectors.windows.backend import create_device
@@ -389,9 +478,26 @@ class WindowsDriver(BaseDriver):
                         files[0].resolve(),
                     )
                     return files[0].resolve()
-                last_size = size
-            time.sleep(0.2)
-        raise RuntimeError("另存为后未观察到稳定的非空文件，未标记保存成功")
+            last_size = size
+            remaining = deadline - now
+            if now >= next_log:
+                logger.info(
+                    "[另存为等待] 对话框仍打开={}，候选文件={}，大小={}，剩余 {:.1f} 秒",
+                    dialog_open,
+                    len(files),
+                    size,
+                    max(0, remaining),
+                )
+                next_log = now + 5
+            if remaining <= 0:
+                if dialog_open:
+                    raise RuntimeError(
+                        "另存为超时：保存消息提交后对话框仍未关闭，停止且不重发"
+                    )
+                raise RuntimeError(
+                    "另存为超时：对话框已关闭，但未确认唯一、稳定的非空文件"
+                )
+            time.sleep(min(self.save_options.poll_interval, remaining))
 
     def is_save_dialog(self) -> bool:
         """根据标准窗口类与标题验证另存为状态，不寻找或操作输入框。"""

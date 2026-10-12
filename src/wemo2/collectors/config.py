@@ -10,6 +10,7 @@ from wemo2.collectors.models import (
     MatchConfig,
     Platform,
     RouteConfig,
+    SaveDialogConfig,
 )
 from wemo2.collectors.profiles import build_profile
 from wemo2.collectors.timezones import resolve_timezone
@@ -32,6 +33,7 @@ class WindowsCollectorConfig(BaseModel):
     matcher: MatchConfig = Field(default_factory=MatchConfig)
     route: RouteConfig = Field(default_factory=RouteConfig)
     feed: FeedCaptureConfig = Field(default_factory=FeedCaptureConfig)
+    save_dialog: SaveDialogConfig = Field(default_factory=SaveDialogConfig)
 
     @field_validator("timezone")
     @classmethod

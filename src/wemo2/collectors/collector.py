@@ -33,7 +33,11 @@ class WindowsScreenshotCollector(BaseCollector):
         self.resource_dir = resource_dir
         self.account = account
         self.profile = build_profile()
-        self.driver = WindowsDriver(config.window_title, config.window_process_id)
+        self.driver = WindowsDriver(
+            config.window_title,
+            config.window_process_id,
+            save_options=config.save_dialog,
+        )
         self.screenshotter = WindowsScreenshotter(
             config.screenshot_dir, config.timezone
         )

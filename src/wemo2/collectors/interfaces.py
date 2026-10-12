@@ -63,6 +63,10 @@ class BaseDriver(ABC):
         """只读检查当前窗口是否为保存对话框，不输入文件名。"""
         return False
 
+    def open_save_dialog(self) -> None:
+        """向已验证的查看器发送一次保存快捷键，交由控制器校验保存框。"""
+        raise NotImplementedError("当前平台尚未实现保存快捷键")
+
     def switch_image(self, frame: Screenshot, direction: str) -> None:
         """在已验证的媒体查看器中发送一次左右方向键，不自动重发。"""
         raise NotImplementedError("当前平台尚未实现图片切换")

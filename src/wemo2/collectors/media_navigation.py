@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Protocol
 from loguru import logger
 from pydantic import BaseModel, ConfigDict
 
-from wemo2.collectors.controller import UiActionError
+from wemo2.collectors.controller import UiActionError, VideoChannelSkipped
 from wemo2.collectors.models import Rect, Screenshot
 
 if TYPE_CHECKING:
@@ -51,11 +51,16 @@ class ReopenImageStrategy:
     ) -> None:
         """沿用逐图保存流程，不猜测查看器下一张是否属于当前朋友圈。"""
         for target in targets:
-            card.media.append(
-                capture._save_media(
-                    card.source, target, stream_offset + target.y - region.y
+            try:
+                card.media.append(
+                    capture._save_media(
+                        card.source, target, stream_offset + target.y - region.y
+                    )
                 )
-            )
+            except VideoChannelSkipped as error:
+                logger.exception("视频号已关闭，跳过本条媒体：{}", error)
+                card.media_detection = "video_channel"
+                return
 
 
 class ArrowImageStrategy:
@@ -90,14 +95,19 @@ class ArrowImageStrategy:
                         capture, card, targets[index:], stream_offset, region
                     )
                     return
-            card.media.append(
-                capture._save_media(
-                    card.source,
-                    target,
-                    stream_offset + target.y - region.y,
-                    keep_viewer=True,
+            try:
+                card.media.append(
+                    capture._save_media(
+                        card.source,
+                        target,
+                        stream_offset + target.y - region.y,
+                        keep_viewer=True,
+                    )
                 )
-            )
+            except VideoChannelSkipped as error:
+                logger.exception("视频号已关闭，跳过本条媒体：{}", error)
+                card.media_detection = "video_channel"
+                return
         capture.close_viewer()
 
 

@@ -22,6 +22,7 @@ class MomentDetails(BaseModel):
     approximate_date: date | None = None
     date_raw: str | None = None
     header_top: int | None = None  # 图像内头像顶部，只供采集端裁剪使用。
+    is_video_channel: bool = False  # 视频号分享只留截图，不下载播放器内容。
 
     @model_validator(mode="after")
     def normalize_name(self):
@@ -149,6 +150,7 @@ class ActionResult(BaseModel):
         "wait_ready",
         "switch_image",
         "save_file",
+        "open_save",
         "close_viewer",
     ]
     name: str  # 语义目标名，不保存固定屏幕点击位置。
@@ -161,7 +163,7 @@ class ActionResult(BaseModel):
     target: LocatedTarget | None = None
     direction: Direction | None = None  # swipe 的拖动方向。
     distance: int | None = Field(default=None, gt=0, strict=True)  # 物理像素距离。
-    wheel_steps: int | None = Field(default=None, ge=1, le=10, strict=True)
+    wheel_steps: int | None = Field(default=None, ge=-10, le=10, strict=True)
     evidence: list[Path] = Field(default_factory=list)  # 包含校验失败时保存的截图。
     expectation: Expectation | None = None
     validation: ValidationResult | None = None
@@ -179,6 +181,7 @@ class SaveDialogConfig(BaseModel):
     # 包含首次探测；只重试控件准备，不重复保存输入。
     prepare_attempts: int = Field(default=3, ge=1, le=10, strict=True)
     poll_interval: float = Field(default=0.2, gt=0, le=5)
+    submit: Literal["enter", "message"] = "enter"  # 默认回车，可选择控件消息方案。
 
 
 class FeedCaptureConfig(BaseModel):
@@ -194,7 +197,7 @@ class FeedCaptureConfig(BaseModel):
     boundary_padding: int = Field(default=8, ge=0, le=100, strict=True)
     recognize_nickname: bool = True
     save_media: bool = True
-    media_workflow: str = Field(default="save_media", min_length=1)
+    media_workflow: str = Field(default="save_media_shortcut", min_length=1)
     use_image_arrows: bool = True  # 优先方向键切换；False 为逐张退出重开。
     media_load_wait_seconds: float = Field(default=5, ge=0, le=30)
     media_load_timeout_seconds: float = Field(default=30, gt=0, le=60)
@@ -230,3 +233,14 @@ class FeedCaptureResult(BaseModel):
     segments: list[FeedSegment] = Field(default_factory=list)
     stop_reason: str = "running"
     error: str | None = None
+    media_stop_reason: str | None = None  # 下载阶段独立留痕，不冒充已遍历所有历史。
+
+
+class MediaDownload(BaseModel):
+    """完整朋友圈在本次拼接流中的范围及最终下载目录；不依赖屏幕临时坐标。"""
+
+    model_config = ConfigDict(extra="forbid")
+    stream_start: int
+    stream_end: int
+    directory: Path
+    skip_reason: str | None = None

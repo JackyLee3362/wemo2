@@ -291,8 +291,8 @@ class WindowsDriver(BaseDriver):
     def scroll(self, frame: Screenshot, target: LocatedTarget, steps: int) -> None:
         """复用 Airtest Windows 的鼠标后端，向下滚动而不拖动内容或点击菜单。"""
         self._validate_target(frame, target)
-        if type(steps) is not int or not 1 <= steps <= 10:
-            raise ValueError("滚轮步数必须为 1 到 10 的整数")
+        if type(steps) is not int or not 1 <= abs(steps) <= 10:
+            raise ValueError("滚轮步数绝对值必须为 1 到 10 的整数")
         bounds = target.bounds
         # 左侧空隙仍属于列表，避开可能拦截滚轮的图片、视频及菜单。
         x = frame.surface.bounds.x + bounds.x + min(8, bounds.width // 2)
@@ -358,9 +358,14 @@ class WindowsDriver(BaseDriver):
         )
         if timeout <= 0:
             raise RuntimeError("另存为超时：准备阶段耗尽等待时间，未提交保存")
-        logger.info("[另存为提交] 发送一次 BM_CLICK，消息等待上限 {:.1f} 秒", timeout)
+        logger.info("[另存为提交] 提交方式={}，等待文件落盘", self.save_options.submit)
         try:
-            send_control_message(save_button.handle, win32defines.BM_CLICK, timeout)
+            if self.save_options.submit == "enter":
+                filename_edit.set_focus()
+                self.verify_capture(surface)
+                self.device.keyevent("{ENTER}")
+            else:
+                send_control_message(save_button.handle, win32defines.BM_CLICK, timeout)
         except TimeoutError as error:
             logger.exception(
                 "保存消息未确认处理结果，继续观察对话框和文件，不重复提交：{}", error
@@ -370,6 +375,11 @@ class WindowsDriver(BaseDriver):
         return self._wait_saved_file(
             directory, prefix, dialog_handle, process.value, deadline
         )
+
+    def open_save_dialog(self) -> None:
+        """向已验证的媒体查看器发送一次 Ctrl+S，后续由控制器验证保存框。"""
+        self.verify_capture(self.current_surface())
+        self.device.keyevent("^s")
 
     def _ready_save_controls(self, dialog, deadline: float):
         """对未就绪的控件和无副作用的响应探测有限重试，歧义或失去焦点则停止。"""

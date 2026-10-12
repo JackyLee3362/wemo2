@@ -18,6 +18,7 @@ from wemo2.collectors.media import MediaCapture, SavedMedia
 from wemo2.collectors.models import (
     FeedCaptureResult,
     FeedSegment,
+    MediaDownload,
     MomentDetails,
     Screenshot,
 )
@@ -34,6 +35,7 @@ class MomentArchive:
         self.account = account
         self.paths: list[Path] = []
         self.exported: set[Path] = set()
+        self.downloads: list[MediaDownload] = []
 
     def export(self, result: FeedCaptureResult, media: MediaCapture) -> None:
         """关联同一列表流中的截图与媒体；失败也保留已完成的截图及已验证文件。"""
@@ -154,6 +156,8 @@ class MomentArchive:
         if evidence not in record.evidence:
             record.evidence.append(evidence)
         record.media_requested = record.media_requested or media.config.save_media
+        if details.is_video_channel:
+            record.media_skip_reason = "video_channel"
         if error is not None and error not in record.errors:
             record.errors.append(error)
             record.media_complete = False
@@ -181,6 +185,28 @@ class MomentArchive:
                 record.screenshot_complete,
                 metadata,
             )
+        if complete and key is not None and details.approximate_date is not None:
+            self.downloads.append(
+                MediaDownload(
+                    stream_start=segment.stream_start + (details.header_top or 0),
+                    stream_end=segment.stream_end,
+                    directory=folder / "media",
+                    skip_reason=record.media_skip_reason,
+                )
+            )
+
+    def register_download(self, saved: SavedMedia, stream_y: int) -> None:
+        """实际文件已在最终目录落盘后立即登记 JSON，失败中断也保留资源记录。"""
+        for item in self.downloads:
+            if item.stream_start <= stream_y < item.stream_end:
+                metadata = item.directory.parent / "post.json"
+                record = MomentRecord.model_validate_json(
+                    metadata.read_text(encoding="utf-8")
+                )
+                self._copy_media(metadata.parent, record, saved)
+                write_model_json(metadata, record)
+                return
+        raise RuntimeError("已下载文件没有对应的完整朋友圈归档")
 
     def _copy_media(
         self, folder: Path, record: MomentRecord, saved: SavedMedia
@@ -196,9 +222,13 @@ class MomentArchive:
                 if sha256_file(target) != digest:
                     raise RuntimeError("已归档媒体损坏，未跳过去重或覆盖原文件")
                 return
-        destination = folder / "media" / f"{digest}{saved.path.suffix.lower()}"
-        destination.parent.mkdir(exist_ok=True)
-        shutil.copy2(saved.path, destination)
+        if saved.path.resolve().parent == (folder / "media").resolve():
+            destination = saved.path.resolve()
+            folder = folder.resolve()
+        else:
+            destination = folder / "media" / f"{digest}{saved.path.suffix.lower()}"
+            destination.parent.mkdir(exist_ok=True)
+            shutil.copy2(saved.path, destination)
         record.media.append(
             ArchiveMedia(
                 path=destination.relative_to(folder).as_posix(),

@@ -27,6 +27,7 @@ from wemo2.collectors.models import (
     Platform,
     Rect,
     Screenshot,
+    SaveDialogConfig,
     Surface,
     ValidationResult,
 )
@@ -338,7 +339,7 @@ class FeedCaptureTests(unittest.TestCase):
             )
 
     def test_scroll_uses_screen_coordinates_and_does_not_drag(self):
-        driver = WindowsDriver()
+        driver = WindowsDriver(save_options=SaveDialogConfig(submit="message"))
         driver.device = MagicMock()
         target = self.anchor(self.first, 70)
         with patch.object(driver, "verify_capture"):
@@ -442,6 +443,8 @@ class FeedCaptureTests(unittest.TestCase):
     def test_media_input_failure_saves_card_metadata_before_propagating(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
         media.reader = MagicMock()
+        media.reader.channel_header.return_value = None
+        media.reader.is_channel_card.return_value = False
         media.reader.nickname.return_value = TextLine(
             text="测试昵称", score=0.9, bounds=Rect(x=10, y=5, width=60, height=20)
         )
@@ -471,6 +474,8 @@ class FeedCaptureTests(unittest.TestCase):
     def test_visible_media_of_long_post_is_saved_before_end_anchor_appears(self):
         media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
         media.reader = MagicMock()
+        media.reader.channel_header.return_value = None
+        media.reader.is_channel_card.return_value = False
         media.reader.nickname.return_value = None
         with (
             patch(
@@ -602,11 +607,14 @@ class FeedCaptureTests(unittest.TestCase):
         media = MediaCapture(
             controller,
             FeedCaptureConfig(
-                media_load_wait_seconds=0, media_load_timeout_seconds=0.01
+                media_load_wait_seconds=0, media_load_timeout_seconds=0.01,
+                media_workflow="save_media"
             ),
             self.path,
         )
         media.reader = MagicMock()
+        media.reader.channel_header.return_value = None
+        media.reader.is_channel_card.return_value = False
         media.reader.read.return_value = [
             TextLine(
                 text="另存为", score=0.99, bounds=Rect(x=10, y=20, width=70, height=20)
@@ -897,7 +905,7 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertFalse(media.previews[0].workflow_complete)
 
     def test_driver_image_navigation_uses_left_and_right_keys_after_focus_check(self):
-        driver = WindowsDriver()
+        driver = WindowsDriver(save_options=SaveDialogConfig(submit="message"))
         driver.device = MagicMock()
         with patch.object(driver, "verify_capture") as verify:
             driver.switch_image(self.first, "right")
@@ -958,7 +966,7 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(media.controller.results[-1].status, "failed")
 
     def test_standard_save_dialog_with_ambiguous_edits_does_not_type(self):
-        driver = WindowsDriver()
+        driver = WindowsDriver(save_options=SaveDialogConfig(submit="message"))
         driver.device = MagicMock()
         dialog = MagicMock()
         dialog.class_name.return_value = "#32770"
@@ -997,7 +1005,7 @@ class FeedCaptureTests(unittest.TestCase):
             self.assertIsNone(reader.nickname(image, 1.25))
 
     def test_save_dialog_uses_unique_path_and_waits_for_actual_file(self):
-        driver = WindowsDriver()
+        driver = WindowsDriver(save_options=SaveDialogConfig(submit="message"))
         driver.device = MagicMock()
         driver.device.handle = 123
         driver.user32 = MagicMock()
@@ -1089,7 +1097,7 @@ class FeedCaptureTests(unittest.TestCase):
     def test_follow_foreground_keeps_process_boundary_after_previous_window_closes(
         self,
     ):
-        driver = WindowsDriver()
+        driver = WindowsDriver(save_options=SaveDialogConfig(submit="message"))
         driver.device = MagicMock()
         driver.device.handle = 123
         driver.session_process_id = 42

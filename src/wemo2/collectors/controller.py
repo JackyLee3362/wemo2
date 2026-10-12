@@ -35,6 +35,10 @@ class UiActionError(RuntimeError):
         super().__init__(result.error or "界面动作失败")
 
 
+class VideoChannelSkipped(RuntimeError):
+    """已关闭误打开的视频号，通知媒体批次跳过该分享，不重试下载。"""
+
+
 class UiController:
     """统一执行截图、定位、单次点击或滑动，以及操作后的等待和校验。
 
@@ -232,7 +236,7 @@ class UiController:
                 result.direction = direction
                 result.distance = distance
             if operation == "scroll":
-                if type(wheel_steps) is not int or not 1 <= wheel_steps <= 10:
+                if type(wheel_steps) is not int or not 1 <= abs(wheel_steps) <= 10:
                     raise ValueError("滚轮步数必须为 1 到 10 的整数")
                 result.wheel_steps = wheel_steps
             before, target = self._prepare(result, source_page, region, locate_target)
@@ -415,7 +419,7 @@ class UiController:
 
     def platform_step(
         self,
-        operation: Literal["save_file", "close_viewer", "switch_image"],
+        operation: Literal["save_file", "close_viewer", "switch_image", "open_save"],
         action: Callable,
         *,
         name: str | None = None,
@@ -656,6 +660,10 @@ class UiController:
         path = None
 
         def check(frame: Screenshot, state: str) -> ValidationResult:
+            if state == "viewer" and self._channel_header(frame, reader) is not None:
+                return ValidationResult(
+                    status="passed", message="识别到视频号，下一步关闭并跳过"
+                )
             if state == "menu":
                 matched = self._media_target(
                     frame, workflow.menu_target, source, bounds, reader
@@ -755,6 +763,17 @@ class UiController:
                 )
                 if result.status != "verified":
                     raise UiActionError(result)
+            elif step.action == "open_save":
+                return self.platform_step(
+                    "open_save",
+                    self.driver.open_save_dialog,
+                    name=name,
+                    before=before,
+                    verify=verify,
+                    timeout=step.timeout_seconds,
+                    workflow_name=workflow_name,
+                    settle_seconds=step.settle_seconds,
+                )
             elif step.action == "save_file":
                 return self.platform_step(
                     "save_file",
@@ -858,6 +877,11 @@ class UiController:
                     raise RuntimeError("尚未保存文件，不能保留查看器进入下一张")
                 return path  # 保存和查看器已验证，退出由图片批次策略负责留证。
             value = execute(current, step)
+            if step.expect == "viewer" and self.results[-1].after is not None:
+                observed = self.results[-1].after
+                if self._channel_header(observed, reader) is not None:
+                    self.dismiss_channel(reader, source=source)
+                    raise VideoChannelSkipped("视频号已关闭，跳过下载")
             if isinstance(value, Path):
                 path = value
             current = step.next
@@ -866,3 +890,59 @@ class UiController:
                     raise RuntimeError("媒体流程结束但未交付文件路径")
                 return path
         raise RuntimeError("媒体流程超出步骤上限")
+
+    def _channel_header(self, frame: Screenshot, reader: TextRecognizer):
+        with Image.open(frame.image_path) as image:
+            return reader.channel_header(image, frame.surface.scale)
+
+    def dismiss_channel(
+        self, reader: TextRecognizer, *, source: Screenshot | None = None
+    ) -> bool:
+        """识别视频号顶部标签旁的关闭图标，只关闭该标签并验证返回朋友圈。"""
+        frame = self.capture(follow_foreground=True)
+        if self._channel_header(frame, reader) is None:
+            return False
+
+        def locate(current: Screenshot) -> LocatedTarget | None:
+            label = self._channel_header(current, reader)
+            if label is None:
+                return None
+            left = label.bounds.x + label.bounds.width
+            top = max(0, label.bounds.y - round(12 * current.surface.scale))
+            region = Rect(
+                x=left,
+                y=top,
+                width=min(
+                    round(170 * current.surface.scale),
+                    current.surface.bounds.width - left,
+                ),
+                height=min(
+                    round(44 * current.surface.scale),
+                    current.surface.bounds.height - top,
+                ),
+            )
+            matches = self.locator.locate_all(current, "channel_close", region)
+            return matches[0] if len(matches) == 1 else None
+
+        def verify(current: Screenshot) -> ValidationResult:
+            passed = self._channel_header(current, reader) is None
+            if source is not None:
+                passed = passed and current.surface == source.surface
+            return ValidationResult(
+                status="passed" if passed else "not_met",
+                message="视频号标签关闭并恢复原窗口",
+            )
+
+        logger.info("[视频号] 检测到已打开的标签，关闭后跳过所有下载")
+        result = self._perform(
+            "click",
+            "channel_close",
+            None,
+            locate_target=locate,
+            verify=verify,
+            follow_foreground=True,
+            settle_seconds=0.3,
+        )
+        if result.status != "verified":
+            raise UiActionError(result)
+        return True

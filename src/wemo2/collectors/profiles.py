@@ -76,7 +76,9 @@ class MediaStepSpec(BaseModel):
     """媒体单步的动作、前置状态、后置验证和唯一后继；失败始终停止并留证。"""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    action: Literal["click", "right_click", "wait_ready", "save_file", "close_viewer"]
+    action: Literal[
+        "click", "right_click", "wait_ready", "open_save", "save_file", "close_viewer"
+    ]
     target: str | None = None
     before: Literal["original", "viewer", "menu", "save_dialog"]
     expect: Literal["viewer", "menu", "save_dialog", "file", "original"]
@@ -132,6 +134,13 @@ class MediaWorkflowSpec(BaseModel):
             elif step.action == "wait_ready":
                 if step.before != "viewer" or step.expect != "viewer" or step.target:
                     raise ValueError("加载等待只观察查看器，不执行输入或改变页面")
+            elif step.action == "open_save":
+                if (
+                    step.before != "viewer"
+                    or step.expect != "save_dialog"
+                    or step.target
+                ):
+                    raise ValueError("保存快捷键必须从查看器进入保存对话框")
             elif (
                 step.before != "viewer"
                 or step.expect != "original"
@@ -293,7 +302,7 @@ class UiProfile(BaseModel):
 def build_profile() -> UiProfile:
     """微信内置页面与主题的唯一维护位置，返回独立配置对象。"""
     assets = Path(__file__).parent / "assets"
-    return UiProfile(
+    profile = UiProfile(
         pages={
             "home": PageSpec(
                 name="home",
@@ -349,6 +358,9 @@ def build_profile() -> UiProfile:
                 ),
                 "moments_anchor": TemplateSpec(
                     path=assets / "moments_anchor.png", region_ratio=1.0
+                ),
+                "channel_close": TemplateSpec(
+                    path=assets / "channel_close.png", region_ratio=1.0
                 ),
             }
         },
@@ -407,3 +419,20 @@ def build_profile() -> UiProfile:
             ),
         },
     )
+    # 两种入口共用打开、加载、落盘和返回规则，只替换进入保存框的步骤。
+    shortcut = profile.media_workflows["save_media"].model_dump()
+    del shortcut["steps"]["open_menu"]
+    del shortcut["steps"]["choose_save_as"]
+    shortcut["steps"]["wait_ready"]["next"] = "open_save"
+    shortcut["steps"]["open_save"] = MediaStepSpec(
+        action="open_save",
+        before="viewer",
+        expect="save_dialog",
+        next="write_file",
+        settle_seconds=0.2,
+    ).model_dump()
+    profile.media_workflows["save_media_shortcut"] = MediaWorkflowSpec.model_validate(
+        shortcut
+    )
+    profile.validate_structure()
+    return profile

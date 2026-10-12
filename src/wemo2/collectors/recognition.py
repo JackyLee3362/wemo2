@@ -119,6 +119,7 @@ class TextRecognizer:
         name = self.nickname(image, scale, search_height=image.height)
         details = MomentDetails()
         tiles = media_tiles(image, scale)
+        details.is_video_channel = self.is_channel_card(image, lines, tiles)
         footer = None
         for line in lines:
             compact = "".join(line.text.split())
@@ -136,18 +137,21 @@ class TextRecognizer:
                     break
             if in_media:
                 continue
+            # 发布时间与“视频号 · 作者”等来源标签可能被 OCR 合并成一行。
+            timestamp = compact.split("视频号", 1)[0]
             if re.fullmatch(
                 r"(?:刚刚|今天|昨天|前天|\d+(?:分钟|小时|天)前|(?:\d{4}年)?\d{1,2}月\d{1,2}日?(?:周[一二三四五六日天])?|(?:\d{4}[-/])?\d{1,2}[-/]\d{1,2})",
-                compact,
+                timestamp,
             ):
                 footer = line
-                details.date_raw = line.text
-                details.approximate_date = approximate_day(line.text, captured_at)
+                details.date_raw = timestamp
+                details.approximate_date = approximate_day(timestamp, captured_at)
                 break
         if name is None:
             return details
         details.person = name.text
-        details.header_top = max(0, name.bounds.y - round(5 * scale))
+        # 头像顶部通常高于昵称；多留 16 个逻辑像素，避免按文字框切掉头像。
+        details.header_top = max(0, name.bounds.y - round(16 * scale))
         # 表情可能把蓝色昵称分成多块；合并同一行邻近的蓝色文字。
         fragments = []
         for line in lines:
@@ -194,6 +198,43 @@ class TextRecognizer:
         details.text = "\n".join(line.text for line in caption)
         details.text_status = "partial" if incomplete else "complete"
         return details
+
+    def is_channel_card(
+        self,
+        image: Image.Image,
+        lines: list[TextLine] | None = None,
+        tiles: list[Rect] | None = None,
+    ) -> bool:
+        """仅识别媒体下方的来源标签；文案中提到视频号不构成视频号分享。"""
+        if lines is None:
+            lines = self.read(image)
+        if tiles is None:
+            tiles = media_tiles(image, 1.0)
+        for line in lines:
+            text = "".join(line.text.split())
+            if line.score < 0.8 or "视频号" not in text:
+                continue
+            if (line.bounds.y > image.height / 2 and self._gray_footer(image, line)
+                    and re.match(r"^(?:(?:刚刚|今天|昨天|前天|\d+(?:分钟|小时|天)前))?视频号[·•:：]", text)):
+                return True
+            for tile in tiles:
+                if (
+                    line.bounds.y >= tile.y + tile.height - 3
+                    and line.bounds.x >= tile.x - 10
+                    and self._gray_footer(image, line)
+                ):
+                    return True
+        return False
+
+    def channel_header(self, image: Image.Image, scale: float) -> TextLine | None:
+        """只在顶部栏识别视频号标题，排除发现菜单、正文和卡片来源标签。"""
+        with image.crop(
+            (0, 0, image.width, min(image.height, round(90 * scale)))
+        ) as header:
+            for line in self.read(header):
+                if line.score >= 0.8 and line.text.strip() == "视频号":
+                    return line
+        return None
 
     def _blue_text(self, image: Image.Image, line: TextLine) -> bool:
         import numpy as np

@@ -51,6 +51,7 @@ class MomentRecord(BaseModel):
     screenshot_complete: bool = False
     media_complete: bool | None = None  # 未获得实际媒体总数时不能声明全部下载。
     media_requested: bool
+    media_skip_reason: str | None = None  # video_channel 表示只保留分享卡片截图。
     media: list[ArchiveMedia] = Field(default_factory=list)
     evidence: list[MomentEvidence] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)

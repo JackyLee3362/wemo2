@@ -1,6 +1,7 @@
 """动态卡片识别和媒体另存为流程；截图、输入及动作证据均经过控制器。"""
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -12,7 +13,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from wemo2.collectors import validation
 from wemo2.collectors.controller import UiController
 from wemo2.collectors.media_navigation import ViewerSession, image_save_strategy
-from wemo2.collectors.models import FeedCaptureConfig, LocatedTarget, Rect, Screenshot
+from wemo2.collectors.models import (
+    FeedCaptureConfig,
+    LocatedTarget,
+    MediaDownload,
+    Rect,
+    Screenshot,
+)
 from wemo2.collectors.recognition import (
     TextLine,
     TextRecognizer,
@@ -45,9 +52,9 @@ class CardCapture(BaseModel):
     partial_end: bool = False
     status: str = "processing"
     error: str | None = None
-    media_detection: Literal["not_requested", "none_detected", "candidates_found"] = (
-        "not_requested"
-    )
+    media_detection: Literal[
+        "not_requested", "none_detected", "candidates_found", "video_channel"
+    ] = "not_requested"
     media_candidates: int = Field(default=0, ge=0)
 
 
@@ -81,6 +88,21 @@ class MediaCapture:
         self.errors: list[str] = []
         self.viewer: ViewerSession | None = None
         self.image_strategy = image_save_strategy(config.use_image_arrows)
+        self.scan_only = False
+        self.downloads: list[MediaDownload] | None = None
+        self.on_download: Callable[[SavedMedia, int], None] | None = None
+
+    def destination(self, stream_y: int) -> Path | None:
+        """只允许下载到完整识别的朋友圈目录；视频号及未知归属的候选跳过。"""
+        if self.downloads is None:
+            return self.directory / "media"
+        for item in self.downloads:
+            if item.stream_start <= stream_y < item.stream_end:
+                if item.skip_reason is None:
+                    return item.directory
+                logger.info("[媒体跳过] {}，流位置={}", item.skip_reason, stream_y)
+                return None
+        return None
 
     def close_viewer(self, *, alternate_bounds: Rect | None = None) -> None:
         """批次结束或切换兜底时退出查看器，成功返回后才允许复用本批媒体缓存。"""
@@ -108,11 +130,14 @@ class MediaCapture:
         keep_viewer: bool = False,
     ) -> SavedMedia:
         self.last_saved = None
+        directory = self.destination(stream_y + bounds.height // 2)
+        if directory is None:
+            raise RuntimeError("媒体缺少完整归档身份或属于视频号，未打开保存界面")
         logger.info(
             "[媒体保存] 开始，流位置={}，保留查看器={}，保存目录={}",
             stream_y,
             keep_viewer,
-            self.directory / "media",
+            directory,
         )
         session = self.viewer
         if session is None:
@@ -162,6 +187,8 @@ class MediaCapture:
             )
             self.paths.append(path)
             self.last_saved = saved
+            if self.on_download is not None:
+                self.on_download(saved, stream_y + bounds.height // 2)
             logger.info(
                 "[媒体保存] 文件校验通过，类型={}，大小={} 字节，SHA-256={}，路径={}",
                 saved.kind,
@@ -181,7 +208,7 @@ class MediaCapture:
         self.controller.run_media_workflow(
             source,
             bounds,
-            self.directory / "media",
+            directory,
             self.reader,
             on_file,
             workflow_name=self.config.media_workflow,
@@ -263,7 +290,7 @@ class MediaCapture:
                                 if card.nickname is None
                                 else card.nickname.text,
                             )
-                        if self.config.save_media:
+                        if self.config.save_media and not self.scan_only:
                             tiles = media_tiles(image, frame.surface.scale)
                             card.media_candidates = len(tiles)
                             card.media_detection = (
@@ -273,6 +300,7 @@ class MediaCapture:
                                 "[媒体定位] 当前卡片识别到 {} 个媒体候选", len(tiles)
                             )
                             targets = []
+                            channel = self.reader.is_channel_card(image, tiles=tiles)
                             for tile in tiles:
                                 target = Rect(
                                     x=bounds.x + tile.x,
@@ -280,7 +308,19 @@ class MediaCapture:
                                     width=tile.width,
                                     height=tile.height,
                                 )
-                                targets.append(target)
+                                center = (
+                                    stream_offset
+                                    + target.y
+                                    - region.y
+                                    + target.height // 2
+                                )
+                                if not channel and self.destination(center) is not None:
+                                    targets.append(target)
+                            if channel:
+                                card.media_detection = "video_channel"
+                                logger.info(
+                                    "[媒体跳过] 卡片来源为视频号，仅保留朋友圈截图"
+                                )
                             self.image_strategy.save(
                                 self, card, targets, stream_offset, region
                             )

@@ -277,3 +277,83 @@ class FeedCapture:
                 path,
             )
         return self.result
+
+    def download_media(self) -> None:
+        """从扫描终点逐屏回看，依靠相邻截图重叠定位流坐标，再下载到最终目录。"""
+        if self.media is None or not self.media.downloads:
+            self.result.media_stop_reason = "no_complete_posts"
+            logger.warning(
+                "[媒体下载] 没有已确认日期、昵称和完整文案的朋友圈，保留截图证据"
+            )
+            self._write_manifest()
+            return
+        if self.result.stop_reason not in ("max_screens", "no_progress"):
+            self.result.media_stop_reason = "scan_unverified"
+            self._write_manifest()
+            return
+        original = self.result.frames[-1]
+        region = self.config.region or self.controller.profile.feed_bounds(
+            original.surface
+        )
+        static = self.controller.profile.feed_static_bounds(
+            region, original.surface.scale
+        )
+        frame = self.controller.capture()
+        from wemo2.collectors.validation import region_unchanged
+
+        if frame.surface != original.surface or not region_unchanged(
+            original, frame, static
+        ):
+            raise RuntimeError("下载开始前列表位置已变化，未使用旧的朋友圈坐标")
+        offset = self.stream_height - region.height
+        limit = self.config.max_screens * self.config.wheel_steps + 2
+        logger.info(
+            "[媒体下载] 开始回看，归档范围={}，最多 {} 屏",
+            len(self.media.downloads),
+            limit,
+        )
+        try:
+            for _ in range(limit):
+                anchors = self.controller.locator.locate_all(
+                    frame, "moments_anchor", region
+                )
+                self.media.process(frame, region, anchors, offset)
+                if offset <= 0:
+                    self.result.media_stop_reason = "completed_visible_range"
+                    return
+                # 一步回滚保留足够重叠；这是移动到上一段，不是重发失败的输入。
+                action = self.controller.scroll(
+                    region,
+                    -1,
+                    settle_seconds=self.config.settle_seconds,
+                    timeout=self.config.timeout_seconds,
+                )
+                if action.status != "verified" or action.after is None:
+                    raise UiActionError(action)
+                after = action.after
+                if after.surface != frame.surface:
+                    raise RuntimeError("媒体回看时窗口发生变化，停止下载")
+                with (
+                    self._image(after, region) as earlier,
+                    self._image(frame, region) as later,
+                ):
+                    shift = overlap_shift(earlier, later, static.width)
+                if shift is None:
+                    raise RuntimeError(
+                        "媒体回看无法验证相邻截图重叠，停止以防下载到错误目录"
+                    )
+                offset -= shift
+                logger.info("[媒体回看] 向上移动 {} 像素，当前流位置={}", shift, offset)
+                frame = after
+            raise RuntimeError("媒体回看达到屏数上限，未完成已扫描范围")
+        except Exception as error:
+            logger.exception("媒体回看下载失败，保留已保存图片和元数据：{}", error)
+            self.result.media_stop_reason = "failed"
+            self.result.error = str(error)
+            raise
+        finally:
+            self._write_manifest()
+
+    def _write_manifest(self) -> None:
+        path = self.directory / "manifest.json"
+        path.write_text(self.result.model_dump_json(indent=2), encoding="utf-8")

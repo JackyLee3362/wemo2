@@ -11,6 +11,7 @@ from wemo2.collectors.feed import FeedCapture
 from wemo2.collectors.locating import AirtestLocator
 from wemo2.collectors.media import MediaCapture
 from wemo2.collectors.profiles import build_profile
+from wemo2.collectors.recognition import TextRecognizer
 from wemo2.collectors.routing import PageRouter
 from wemo2.collectors.windows.driver import WindowsDriver
 from wemo2.collectors.windows.screenshot import WindowsScreenshotter
@@ -63,6 +64,8 @@ class WindowsScreenshotCollector(BaseCollector):
         self.archive = None
         try:
             self.driver.attach()
+            if self.config.feed.enabled:
+                self.controller.dismiss_channel(TextRecognizer())
             if self.config.route.target == "none":
                 frame = self.controller.capture()
             else:
@@ -73,6 +76,8 @@ class WindowsScreenshotCollector(BaseCollector):
                         self.controller, self.config.feed, self.config.screenshot_dir
                     )
                     self.archive = MomentArchive(self.resource_dir, self.account)
+                    # 先闭合并归档整条动态，第二阶段才按已确定的身份目录下载。
+                    self.media.scan_only = True
                 self.feed = FeedCapture(
                     self.controller,
                     self.config.feed,
@@ -89,6 +94,15 @@ class WindowsScreenshotCollector(BaseCollector):
                         and self.feed.result.segments
                     ):
                         self.archive.export(self.feed.result, self.media)
+                if (
+                    self.media is not None
+                    and self.archive is not None
+                    and self.config.feed.save_media
+                ):
+                    self.media.downloads = self.archive.downloads
+                    self.media.on_download = self.archive.register_download
+                    self.media.scan_only = False
+                    self.feed.download_media()
             posts = set()
             if self.archive is not None:
                 for path in self.archive.paths:

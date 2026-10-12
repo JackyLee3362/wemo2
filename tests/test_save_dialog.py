@@ -23,7 +23,7 @@ class SaveDialogTests(unittest.TestCase):
         self.directory = Path(temporary.name)
         self.clock = SimpleNamespace(now=0.0)
         self.driver = WindowsDriver(
-            save_options=SaveDialogConfig(timeout_seconds=6, poll_interval=0.2)
+            save_options=SaveDialogConfig(timeout_seconds=6, poll_interval=0.2, submit="message")
         )
         self.driver.device = MagicMock()
         self.driver.device.handle = 100

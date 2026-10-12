@@ -242,6 +242,12 @@ OCR 及卡片解析输出采集私有 MomentDetails；MomentArchive 通过人物
 
 ## 9. 朋友圈资源归档
 
+归档前由 `TextRecognizer` 识别昵称同行右侧的广告标签，增强局部对比度后交给现有 OCR；广告只保留采集证据，不生成 `post.json` 和下载计划。广告优先跳过，不参与日期停止判断。
+
+`FeedCaptureConfig.recent_days` 为可选正整数，省略则不限制日期。`MomentArchive` 按首帧日期固定最近 N 个自然日（含当天）的截止日；日期未知不触发停止。遇到已确认过期的完整条目，将 `FeedCaptureResult.stop_reason` 设为 `date_limit`，归档回调和最后收尾都不再处理截止位置之后的条目。`FeedCapture` 在下一次滚动前检查结果并停止；下载阶段仍可处理此前确认的范围内计划，不把正常日期停止当作拼接故障。
+
+CLI 的 `--user` 在配置加载前映射为通用 `account` 覆盖值；采集器与保存器共用账号目录，界面实现不感知命令行选项。
+
 共用 `AppConfig` 维护 `resource_dir` 与 `account`，由注册表传给采集器。配置文件解析相对资源路径，
 组装入口负责创建 `MomentArchive`，核心 wemo2 不解释目录布局或截图字段。
 输出层级为资源根目录 → 备份账号 → 推断的发布日期（YYYY-MM-DD） → 去除 emoji 后的人物名 → 朋友圈身份键。

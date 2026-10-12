@@ -133,6 +133,22 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(result.exit_code, 2, result.output)
                 launch.assert_not_called()
 
+    def test_user_option_writes_separate_archive_without_touching_default(self):
+        path = self.write_config('collector="pseudo"\nresource_dir="resources"\n')
+        self.assertEqual(self.invoke(["collect", "--config", str(path)]).exit_code, 0)
+        original = self.cwd / "resources" / "default"
+        before = {}
+        for file in original.rglob("*"):
+            if file.is_file():
+                before[file.relative_to(original)] = file.read_bytes()
+        self.assertTrue(before)
+        result = self.invoke(["collect", "--config", str(path), "--user", "debug-new"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        debug = self.cwd / "resources" / "debug-new"
+        self.assertTrue(list(debug.rglob("post.json")))
+        for relative, content in before.items():
+            self.assertEqual((original / relative).read_bytes(), content)
+
     def test_cli_log_path_overrides_file_without_overriding_business_settings(self):
         path = self.write_config(
             'collector="pseudo"\nlog_file="logs/file.log"\naccount="A"\n'

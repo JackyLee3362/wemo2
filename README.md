@@ -63,7 +63,20 @@ media_load_timeout_seconds = 30
 
 相对资源路径与截图路径以配置文件目录为基准。账号是备份账号，不是朋友圈作者。旧配置中 `collector_options.resource_dir` 和 `collector_options.account` 可兼容读取并提升为顶层字段；重复配置且冲突会报错。
 
-`--config`、`--log-file` 可放在子命令前或后，`save` 额外接受 `--memos`。业务选项保持在 TOML，不增加用于组件、目录、账号、日志级别的命令行参数。未指定子命令只展示帮助。
+`--config`、`--log-file`、`--user` 可放在子命令前或后，`save` 额外接受 `--memos`。`--user` 覆盖配置文件中的 `account`，用于隔离调试归档；未传入时继续使用文件配置，默认账号为 `default`。其余业务选项保持在 TOML。未指定子命令只展示帮助。
+
+```powershell
+uv run wemo2 collect --config wemo2.moments.toml --user debug-1013
+uv run wemo2 save --memos --config wemo2.moments.toml --user debug-1013
+```
+
+上面的采集结果保存在 `resource_dir/debug-1013/朋友圈日期/昵称/hash/`。每次换一个调试账号即可保留之前的结果；同一账号仍执行原有去重。
+
+`collector_options.feed.recent_days` 可设为 1、2、3 等正整数，表示最近 N 个自然日（含今天）。以首次列表截图的配置时区日期固定截止日：最近 1 天为今天，最近 2 天为今天和昨天；跨午夜不会移动截止日。省略此项则不按日期停止。需要开启 `recognize_nickname`，以识别人物和发布时间。
+
+遇到确认早于截止日的完整朋友圈，停止向下扫描，停止原因为 `date_limit`，不归档该条及后续条目；已归档范围内的素材继续下载。日期未知时记录日志并保留 `unknown_date` 截图归档，不以未知日期触发停止，也不下载该条素材。
+
+昵称同行右侧识别到“广告”标签时，跳过该条归档与下载并继续扫描。低对比度标签采用局部增强后 OCR，不把正文提及“广告”当作广告标签。原始截图和分段证据仍保留供排查，不计入朋友圈归档数量。
 
 日志默认由 Loguru 输出到控制台 stderr，Rich 的交互和结果显示在 stdout。未指定 `log_file` 时不创建日志文件；配置 `log_file` 或传入 `--log-file` 后，同时输出到控制台和文件。配置加载错误也会在控制台留下异常堆栈；帮助与版本不初始化运行日志。
 

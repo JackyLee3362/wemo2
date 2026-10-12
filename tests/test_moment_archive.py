@@ -125,6 +125,7 @@ class MomentArchiveTests(unittest.TestCase):
         for days in (1, 2, 3):
             with self.subTest(days=days):
                 self.result.stop_reason = "running"
+                self.result.segments = [self.segment]
                 archive = MomentArchive(self.root, f"最近{days}天", recent_days=days)
                 cutoff = self.time.date() - timedelta(days=days - 1)
                 self.details.approximate_date = cutoff

@@ -45,6 +45,12 @@ class MomentArchive:
         for segment in result.segments:
             if segment.image_path in self.exported:
                 continue
+            if segment.partial_end:
+                logger.info(
+                    "[归档跳过] 底部未闭合，保留拼接证据：{}", segment.image_path
+                )
+                self.exported.add(segment.image_path)
+                continue
             try:
                 source = frames[segment.source_frames[0]]
                 with Image.open(segment.image_path) as image:
@@ -54,10 +60,13 @@ class MomentArchive:
                         )
                     else:
                         details = MomentDetails()
-                    if segment.partial_end:
-                        details.text_status = (
-                            "partial" if details.text is not None else "unknown"
+                    if details.header_top is None:
+                        logger.info(
+                            "[归档跳过] 尚未同时确认头像和更多按钮，保留拼接证据：{}",
+                            segment.image_path,
                         )
+                        self.exported.add(segment.image_path)
+                        continue
                     top = details.header_top or 0
                     with image.crop((0, top, image.width, image.height)) as cropped:
                         self._save(
@@ -204,9 +213,24 @@ class MomentArchive:
                     metadata.read_text(encoding="utf-8")
                 )
                 self._copy_media(metadata.parent, record, saved)
+                record.media_requested = True
                 write_model_json(metadata, record)
                 return
         raise RuntimeError("已下载文件没有对应的完整朋友圈归档")
+
+    def register_skip(self, stream_y: int, reason: str) -> None:
+        """误打开视频号后更新共享下载计划和 JSON，后续视口不再重复打开。"""
+        for item in self.downloads:
+            if item.stream_start <= stream_y < item.stream_end:
+                item.skip_reason = reason
+                metadata = item.directory.parent / "post.json"
+                record = MomentRecord.model_validate_json(
+                    metadata.read_text(encoding="utf-8")
+                )
+                record.media_skip_reason = reason
+                write_model_json(metadata, record)
+                return
+        raise RuntimeError("跳过的媒体没有对应朋友圈归档")
 
     def _copy_media(
         self, folder: Path, record: MomentRecord, saved: SavedMedia
@@ -238,7 +262,7 @@ class MomentArchive:
             )
         )
         self.paths.append(destination)
-        logger.info("[归档媒体] 已拷贝并登记 {}：{}", saved.kind, destination)
+        logger.info("[归档媒体] 已校验并登记 {}：{}", saved.kind, destination)
 
     def _resource_path(self, folder: Path, relative: str) -> Path:
         return resolve_resource_path(folder, relative)

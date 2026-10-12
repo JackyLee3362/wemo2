@@ -59,3 +59,11 @@ uv run wemo2 collect --config wemo2.moments.toml --log-file logs/debug.log
 只对就绪检查及无副作用的 `WM_NULL` 探测重试。Windows 消息超时不能证明动作未发生，已进入处理的消息可能仍会完成，所以 `BM_CLICK` 超时后继续观察、不自动重发。参见 [Microsoft 消息超时说明](https://devblogs.microsoft.com/oldnewthing/20110915-00/?p=9643/) 和 [SendMessageTimeout 文档](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw)。
 
 本次实机验证：通过微信图片右键菜单打开“保存”窗口，再运行实际 `WindowsDriver.save_dialog()`。22:51:08 消息返回后对话框关闭，约 0.8 秒完成提交及稳定文件校验。得到 478154 字节 JPG，并通过 Pillow 图片完整性检查。文件保存在 `data/debug/save-dialog-20261012/media/asset_ff97330d-683b-49a0-a38f-8ddb37696bd3.jpg`，SHA-256 为 `dca0284cae04f6db0e05c8143ca8f71e3bb02e60915153f5ace587d435403286`。本次仅验证单张图片保存，未验证视频和完整多媒体批次。
+
+## 视频号、归档目录与完整截图
+
+图片实测确认 Ctrl+S 可打开标准保存框。首次测试发现 Edit.set_focus 会改变前台窗口，已改用 set_keyboard_focus 并核对键盘焦点；修复后 Enter 提交、对话框关闭和稳定文件校验约 0.7 秒完成。478154 字节 JPG 已直接保存到 `resources/default/2026-10-12/华师-顾旖琪yi/dae5decbcf4e27dad42145203ae4464882b50c8976a73aef29f3b295d8eaa72b/media/asset_d0e499b9-5fd1-4f44-ba03-053042ad298e.jpg`，并立即登记该朋友圈的 post.json。此实测验证单张落盘；反向跨屏定位及视频号误打开后的关闭由自动测试覆盖，未完成真实多屏、多图片整批回归。
+
+默认保存入口已调整为 Ctrl+S 和 Enter；消息提交仍可配置。新增日志 `[媒体跳过]`、`[视频号]`、`[媒体回看]` 和 `[归档跳过]`，分别说明跳过原因、已打开视频号关闭动作、反向定位进展和半张截图不进入主归档的原因。
+
+在 `data/debug/media-policy-20261012` 实测一屏视频号分享：完整截图同时包含左上头像和右下“更多”按钮，JSON 的 screenshot_complete=true、media_skip_reason=video_channel、media=[]。首尾两个未闭合片段仅留作截图证据。资源位于 `resources/default/2026-10-12/华师-CR丹妮/455eadac46192430b5f687681f808496ddf6b3dac1605101f09151b2f6b82f73/`。本轮采集未打开播放器，未产生保存动作。

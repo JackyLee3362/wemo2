@@ -23,7 +23,9 @@ class SaveDialogTests(unittest.TestCase):
         self.directory = Path(temporary.name)
         self.clock = SimpleNamespace(now=0.0)
         self.driver = WindowsDriver(
-            save_options=SaveDialogConfig(timeout_seconds=6, poll_interval=0.2, submit="message")
+            save_options=SaveDialogConfig(
+                timeout_seconds=6, poll_interval=0.2, submit="message"
+            )
         )
         self.driver.device = MagicMock()
         self.driver.device.handle = 100
@@ -219,3 +221,34 @@ class SaveDialogTests(unittest.TestCase):
         ):
             with self.subTest(values=values), self.assertRaises(ValidationError):
                 AppConfig(collector_options={"save_dialog": values})
+
+    def test_enter_submission_focuses_filename_and_waits_for_real_file(self):
+        self.driver.save_options = SaveDialogConfig(timeout_seconds=6)
+        device = self.driver.device
+
+        def keyevent(key):
+            self.edit.set_keyboard_focus.assert_called_once()
+            self.assertEqual(key, "{ENTER}")
+            self.write_saved_file()
+
+        device.keyevent.side_effect = keyevent
+        self.assertTrue(self.run_dialog(lambda *args: None).is_file())
+        device.keyevent.assert_called_once_with("{ENTER}")
+        self.edit.set_focus.assert_not_called()
+        self.assertEqual(self.send.call_count, 1)  # 只有无副作用的 WM_NULL。
+
+    def test_ctrl_s_is_sent_once_only_to_verified_window(self):
+        with (
+            patch.object(self.driver, "verify_capture") as verify,
+            patch.object(self.driver, "current_surface"),
+        ):
+            self.driver.open_save_dialog()
+        verify.assert_called_once()
+        self.driver.device.keyevent.assert_called_once_with("^s")
+
+    def test_missing_keyboard_focus_never_sends_enter(self):
+        self.driver.save_options = SaveDialogConfig(timeout_seconds=6)
+        self.edit.has_keyboard_focus.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "未获得键盘焦点"):
+            self.run_dialog(lambda *args: None)
+        self.driver.device.keyevent.assert_not_called()

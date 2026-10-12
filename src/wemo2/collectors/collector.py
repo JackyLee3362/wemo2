@@ -101,6 +101,7 @@ class WindowsScreenshotCollector(BaseCollector):
                 ):
                     self.media.downloads = self.archive.downloads
                     self.media.on_download = self.archive.register_download
+                    self.media.on_skip = self.archive.register_skip
                     self.media.scan_only = False
                     self.feed.download_media()
             posts = set()

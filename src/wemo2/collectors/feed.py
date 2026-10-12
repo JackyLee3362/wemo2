@@ -17,6 +17,7 @@ from wemo2.collectors.models import (
     Rect,
     Screenshot,
 )
+from wemo2.collectors.validation import region_unchanged
 
 
 def overlap_shift(
@@ -103,7 +104,12 @@ class FeedCapture:
         with self.pending.crop((0, 0, self.pending.width, height)) as image:
             image.save(path)
             nickname = None
-            if recognize and self.media is not None and self.config.recognize_nickname:
+            if (
+                recognize
+                and self.media is not None
+                and self.config.recognize_nickname
+                and not self.media.scan_only
+            ):
                 nickname = self.media.reader.nickname(
                     image,
                     self.result.frames[-1].surface.scale,
@@ -299,8 +305,6 @@ class FeedCapture:
             region, original.surface.scale
         )
         frame = self.controller.capture()
-        from wemo2.collectors.validation import region_unchanged
-
         if frame.surface != original.surface or not region_unchanged(
             original, frame, static
         ):

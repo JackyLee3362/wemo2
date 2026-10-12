@@ -64,7 +64,12 @@ class TextRecognizer:
         return lines
 
     def nickname(
-        self, image: Image.Image, scale: float, *, search_height: int | None = None
+        self,
+        image: Image.Image,
+        scale: float,
+        *,
+        search_height: int | None = None,
+        lines: list[TextLine] | None = None,
     ) -> TextLine | None:
         """识别动态顶部蓝色昵称；表情及罕见字可能有误，结果不用于身份去重。"""
         import numpy as np
@@ -72,8 +77,11 @@ class TextRecognizer:
         with image.crop(
             (0, 0, image.width, min(image.height, search_height or round(96 * scale)))
         ) as header:
-            lines = self.read(header)
+            if lines is None:
+                lines = self.read(header)
             for line in lines:
+                if line.bounds.y + line.bounds.height > header.height:
+                    continue
                 if line.score < 0.8:
                     continue
                 bounds = line.bounds
@@ -116,7 +124,7 @@ class TextRecognizer:
     ) -> MomentDetails:
         """识别人名、头像下方文案和发布时间，排除图片内文字及时间后的评论。"""
         lines = self.read(image)
-        name = self.nickname(image, scale, search_height=image.height)
+        name = self.nickname(image, scale, search_height=image.height, lines=lines)
         details = MomentDetails()
         tiles = media_tiles(image, scale)
         details.is_video_channel = self.is_channel_card(image, lines, tiles)
@@ -151,7 +159,8 @@ class TextRecognizer:
             return details
         details.person = name.text
         # 头像顶部通常高于昵称；多留 16 个逻辑像素，避免按文字框切掉头像。
-        details.header_top = max(0, name.bounds.y - round(16 * scale))
+        if name.bounds.y >= round(8 * scale):
+            details.header_top = max(0, name.bounds.y - round(16 * scale))
         # 表情可能把蓝色昵称分成多块；合并同一行邻近的蓝色文字。
         fragments = []
         for line in lines:
@@ -214,8 +223,14 @@ class TextRecognizer:
             text = "".join(line.text.split())
             if line.score < 0.8 or "视频号" not in text:
                 continue
-            if (line.bounds.y > image.height / 2 and self._gray_footer(image, line)
-                    and re.match(r"^(?:(?:刚刚|今天|昨天|前天|\d+(?:分钟|小时|天)前))?视频号[·•:：]", text)):
+            if (
+                line.bounds.y > image.height / 2
+                and self._gray_footer(image, line)
+                and re.match(
+                    r"^(?:(?:刚刚|今天|昨天|前天|\d+(?:分钟|小时|天)前))?视频号[·•:：]",
+                    text,
+                )
+            ):
                 return True
             for tile in tiles:
                 if (

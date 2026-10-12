@@ -289,7 +289,7 @@ class WindowsDriver(BaseDriver):
                 self.previous_dpi = None
 
     def scroll(self, frame: Screenshot, target: LocatedTarget, steps: int) -> None:
-        """复用 Airtest Windows 的鼠标后端，向下滚动而不拖动内容或点击菜单。"""
+        """复用 Airtest 鼠标滚轮，正数向下扫描，负数向上回看。"""
         self._validate_target(frame, target)
         if type(steps) is not int or not 1 <= abs(steps) <= 10:
             raise ValueError("滚轮步数绝对值必须为 1 到 10 的整数")
@@ -361,8 +361,11 @@ class WindowsDriver(BaseDriver):
         logger.info("[另存为提交] 提交方式={}，等待文件落盘", self.save_options.submit)
         try:
             if self.save_options.submit == "enter":
-                filename_edit.set_focus()
+                # set_focus 会对 Edit 子窗口调用 SetForegroundWindow，破坏对话框焦点。
+                filename_edit.set_keyboard_focus()
                 self.verify_capture(surface)
+                if not filename_edit.has_keyboard_focus():
+                    raise RuntimeError("文件名输入框未获得键盘焦点，未发送回车")
                 self.device.keyevent("{ENTER}")
             else:
                 send_control_message(save_button.handle, win32defines.BM_CLICK, timeout)
@@ -371,7 +374,7 @@ class WindowsDriver(BaseDriver):
                 "保存消息未确认处理结果，继续观察对话框和文件，不重复提交：{}", error
             )
         else:
-            logger.info("[另存为提交] 消息处理已返回，开始校验关闭状态和文件落盘")
+            logger.info("[另存为提交] 提交调用已返回，开始校验关闭状态和文件落盘")
         return self._wait_saved_file(
             directory, prefix, dialog_handle, process.value, deadline
         )

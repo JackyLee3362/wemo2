@@ -11,7 +11,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from wemo2.collectors import validation
-from wemo2.collectors.controller import UiController
+from wemo2.collectors.controller import UiController, VideoChannelSkipped
 from wemo2.collectors.media_navigation import ViewerSession, image_save_strategy
 from wemo2.collectors.models import (
     FeedCaptureConfig,
@@ -91,6 +91,7 @@ class MediaCapture:
         self.scan_only = False
         self.downloads: list[MediaDownload] | None = None
         self.on_download: Callable[[SavedMedia, int], None] | None = None
+        self.on_skip: Callable[[int, str], None] | None = None
 
     def destination(self, stream_y: int) -> Path | None:
         """只允许下载到完整识别的朋友圈目录；视频号及未知归属的候选跳过。"""
@@ -205,18 +206,27 @@ class MediaCapture:
             )
             self.previews.append(preview)
 
-        self.controller.run_media_workflow(
-            source,
-            bounds,
-            directory,
-            self.reader,
-            on_file,
-            workflow_name=self.config.media_workflow,
-            load_wait_seconds=self.config.media_load_wait_seconds,
-            load_timeout_seconds=self.config.media_load_timeout_seconds,
-            start_in_viewer=None if session is None else session.viewer,
-            keep_viewer=keep_image_open,
-        )
+        try:
+            self.controller.run_media_workflow(
+                source,
+                bounds,
+                directory,
+                self.reader,
+                on_file,
+                workflow_name=self.config.media_workflow,
+                load_wait_seconds=self.config.media_load_wait_seconds,
+                load_timeout_seconds=self.config.media_load_timeout_seconds,
+                start_in_viewer=None if session is None else session.viewer,
+                keep_viewer=keep_image_open,
+            )
+        except VideoChannelSkipped as error:
+            logger.exception(
+                "媒体已确认是视频号，记录跳过，后续回看不再打开：{}", error
+            )
+            if self.on_skip is not None:
+                self.on_skip(stream_y + bounds.height // 2, "video_channel")
+            self.viewer = None
+            raise
         if saved is None:
             raise RuntimeError("媒体流程未交付验证过的文件")
         if keep_image_open():
@@ -242,6 +252,8 @@ class MediaCapture:
         stream_offset: int = 0,
     ) -> None:
         """保存当前可见卡片及昵称，必要时下载媒体；不改变列表滚动位置。"""
+        if self.scan_only:
+            return  # 扫描阶段只处理 FeedSegment，避免重复 OCR 半张卡片。
         self.directory.mkdir(parents=True, exist_ok=True)
         top = region.y
         boundaries = []
@@ -278,7 +290,7 @@ class MediaCapture:
                     image.save(path)
                     self.paths.append(path)
                     try:
-                        if self.config.recognize_nickname:
+                        if self.config.recognize_nickname and self.downloads is None:
                             card.nickname = self.reader.nickname(
                                 image,
                                 frame.surface.scale,
@@ -300,7 +312,6 @@ class MediaCapture:
                                 "[媒体定位] 当前卡片识别到 {} 个媒体候选", len(tiles)
                             )
                             targets = []
-                            channel = self.reader.is_channel_card(image, tiles=tiles)
                             for tile in tiles:
                                 target = Rect(
                                     x=bounds.x + tile.x,
@@ -314,9 +325,15 @@ class MediaCapture:
                                     - region.y
                                     + target.height // 2
                                 )
-                                if not channel and self.destination(center) is not None:
+                                if self.destination(center) is not None:
                                     targets.append(target)
+                            channel = False
+                            if targets:
+                                channel = self.reader.is_channel_card(
+                                    image, tiles=tiles
+                                )
                             if channel:
+                                targets = []
                                 card.media_detection = "video_channel"
                                 logger.info(
                                     "[媒体跳过] 卡片来源为视频号，仅保留朋友圈截图"

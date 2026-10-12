@@ -8,6 +8,16 @@
 状态：Windows 已接入截图、发现页导航、朋友圈选中验证、锚点分段、昵称 OCR 及媒体另存为流程。
 Windows 图片查看器及控件另存为已完成单张图片实机验证；视频保存、视觉识别完整度及 Android 适配仍需继续验证和完善。
 
+## 当前采集与下载顺序
+
+扫描阶段由 FeedCapture 拼接完整动态；MomentArchive 仅将同时确认头像和底部锚点的图像写作归档主截图，首尾半张仍保留于扫描证据。识别昵称时为头像顶部留出空间，避免按文字框裁掉头像。MediaCapture 在扫描阶段不再重复 OCR 和下载半张卡片。
+
+MomentArchive 根据完整文案、昵称和发布日期生成 MediaDownload 计划，范围使用拼接流坐标，目录直接指向最终朋友圈的 media 子目录。扫描完成后 FeedCapture.download_media 从终点反向回看，每步验证静态区域重叠后更新流位置；无法验证就停止，避免将图片保存给错误的朋友圈。下载落盘后 register_download 立即登记 JSON，本目录内文件不再复制一份。
+
+默认 save_media_shortcut 流程使用打开预览、等待加载、Ctrl+S、标准文件名控件输入、Enter、文件验证、返回列表。save_media 保留右键菜单流程，SaveDialogConfig.submit 可切换 enter/message。两套入口复用文件稳定性与超时机制。
+
+来源为视频号的计划带 skip_reason，保留朋友圈截图而不点击下载；未知来源误打开视频号时，控制器通过顶部 OCR 标题和邻近 channel_close 模板关闭标签并验证，随后记录 video_channel，后续视口不再重复打开。该关闭目标属于 UiProfile；应用层只组装采集器，不感知目标或截图布局。
+
 ## 1. 精简后的边界
 
 应用层负责组件选择、共用配置、日志及 collect/save 命令；本地去重在采集归档中完成。

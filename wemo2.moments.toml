@@ -18,6 +18,7 @@ target = "moments_entry"
 timeout_seconds = 5
 
 [collector_options.save_dialog]
+submit = "enter" # 默认路径输入后回车；可改为 message 使用保存按钮消息。
 timeout_seconds = 30 # 控件准备、消息提交和文件轮询共用的等待预算。
 message_timeout_seconds = 2 # 单次 Windows 消息的等待上限。
 prepare_attempts = 3 # 含首次检查；只重试就绪探测，不重复保存输入。
@@ -31,6 +32,7 @@ settle_seconds = 0.6
 timeout_seconds = 2
 recognize_nickname = true
 save_media = true
+media_workflow = "save_media_shortcut" # Ctrl+S；不支持时可选择 save_media 右键流程。
 use_image_arrows = true
 media_load_wait_seconds = 5
 media_load_timeout_seconds = 30

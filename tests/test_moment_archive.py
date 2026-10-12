@@ -111,6 +111,48 @@ class MomentArchiveTests(unittest.TestCase):
             paths[0].read_text(encoding="utf-8")
         )
 
+    def test_download_is_registered_in_final_folder_without_second_copy(self):
+        self.media.previews = []
+        archive = self.export()
+        plan = archive.downloads[0]
+        self.assertEqual(plan.directory.parent.parent.name, "张三")
+        self.assertEqual(plan.directory.parents[2].name, "2026-10-10")
+        plan.directory.mkdir()
+        actual = plan.directory / "asset_download.png"
+        actual.write_bytes(self.frame.image_path.read_bytes())
+        archive.register_download(self.saved_file(actual, "image"), 100)
+        _, record = self.record()
+        self.assertEqual(record.media[0].path, "media/asset_download.png")
+        self.assertEqual(list(plan.directory.iterdir()), [actual])
+
+    def test_half_post_remains_evidence_without_primary_archive(self):
+        self.segment.partial_end = True
+        archive = self.export()
+        self.assertEqual(archive.downloads, [])
+        self.assertEqual(list(self.root.rglob("post.json")), [])
+        self.assertTrue(self.segment.image_path.is_file())
+
+    def test_channel_keeps_complete_screenshot_and_excludes_download_plan(self):
+        self.details.is_video_channel = True
+        self.media.previews = []
+        archive = self.export()
+        path, record = self.record()
+        self.assertTrue(record.screenshot_complete)
+        self.assertEqual(record.media_skip_reason, "video_channel")
+        self.assertEqual(record.media, [])
+        self.assertTrue((path.parent / record.primary_screenshot).is_file())
+        self.media.downloads = archive.downloads
+        self.assertIsNone(self.media.destination(100))
+
+    def test_channel_discovered_in_viewer_stays_skipped_in_later_frames(self):
+        archive = self.export()
+        self.media.downloads = archive.downloads
+        self.assertIsNotNone(self.media.destination(100))
+        archive.register_skip(100, "video_channel")
+        self.assertIsNone(self.media.destination(100))
+        _, record = self.record()
+        self.assertEqual(record.media_skip_reason, "video_channel")
+
     def test_one_folder_contains_metadata_screenshot_images_and_video(self):
         video = self.path / "clip.mp4"
         video.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"video fixture")
@@ -353,16 +395,23 @@ class MomentArchiveTests(unittest.TestCase):
                         feed.result.error = "采集输入失败"
                         raise RuntimeError("采集输入失败")
 
-                with patch(
-                    "wemo2.collectors.collector.FeedCapture.run",
-                    autospec=True,
-                    side_effect=capture,
+                with (
+                    patch(
+                        "wemo2.collectors.collector.FeedCapture.run",
+                        autospec=True,
+                        side_effect=capture,
+                    ),
+                    patch(
+                        "wemo2.collectors.collector.FeedCapture.download_media"
+                    ) as download,
+                    patch.object(collector.controller, "dismiss_channel"),
                 ):
                     if fail:
                         with self.assertRaisesRegex(RuntimeError, "采集输入失败"):
                             collector.collect()
                     else:
                         self.assertEqual(collector.collect().posts, 1)
+                        download.assert_called_once()
                 path, record = self.record()
                 self.assertIn(path, collector.artifacts())
                 self.assertEqual(len(record.media), 1)

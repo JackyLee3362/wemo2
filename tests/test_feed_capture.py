@@ -26,8 +26,8 @@ from wemo2.collectors.models import (
     MatchConfig,
     Platform,
     Rect,
-    Screenshot,
     SaveDialogConfig,
+    Screenshot,
     Surface,
     ValidationResult,
 )
@@ -511,6 +511,67 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertEqual(len(tiles), 3)
         self.assertEqual([tile.x for tile in tiles], [80, 224, 368])
 
+    def test_channel_footer_is_recognized_without_clicking_cover(self):
+        reader = TextRecognizer()
+        footer = TextLine(
+            text="1小时前 视频号·作者",
+            score=0.99,
+            bounds=Rect(x=80, y=350, width=170, height=20),
+        )
+        with Image.new("RGB", (400, 400), (30, 30, 30)) as image:
+            image.paste((140, 140, 140), (80, 350, 250, 370))
+            self.assertTrue(reader.is_channel_card(image, [footer], []))
+            caption = footer.model_copy(update={"text": "我今天在视频号看了电影"})
+            self.assertFalse(reader.is_channel_card(image, [caption], []))
+
+    def test_channel_card_never_opens_media(self):
+        media = MediaCapture(self.controller, FeedCaptureConfig(), self.path)
+        media.reader = MagicMock()
+        media.reader.nickname.return_value = None
+        media.reader.is_channel_card.return_value = True
+        media.image_strategy = MagicMock()
+        with patch(
+            "wemo2.collectors.media.media_tiles",
+            return_value=[Rect(x=50, y=50, width=80, height=100)],
+        ):
+            media.process(self.first, Rect(x=0, y=0, width=200, height=300), [])
+        self.assertEqual(media.image_strategy.save.call_args.args[2], [])
+        self.controller.run_media_workflow.assert_not_called()
+
+    def test_reverse_scroll_checks_overlap_and_preserves_stream_coordinates(self):
+        scan = self.scanner()
+        scan.directory.mkdir()
+        scan.result.frames = [self.first, self.second]
+        scan.result.stop_reason = "max_screens"
+        scan.stream_height = 400
+        scan.media = MagicMock()
+        self.controller.capture.return_value = self.second
+        self.controller.scroll.return_value.after = self.first
+        self.controller.locator.locate_all.side_effect = [[], []]
+        scan.download_media()
+        self.assertEqual(
+            [call.args[3] for call in scan.media.process.call_args_list], [100, 0]
+        )
+        self.assertEqual(self.controller.scroll.call_args.args[1], -1)
+        self.assertEqual(scan.result.media_stop_reason, "completed_visible_range")
+
+    def test_reverse_scroll_rejects_unrelated_content_before_next_download(self):
+        scan = self.scanner()
+        scan.directory.mkdir()
+        scan.result.frames = [self.first, self.second]
+        scan.result.stop_reason = "max_screens"
+        scan.stream_height = 400
+        scan.media = MagicMock()
+        self.controller.capture.return_value = self.second
+        self.controller.locator.locate_all.side_effect = [[]]
+        self.controller.scroll.return_value.after = self.frame(
+            "unrelated", np.zeros((300, 200, 3), dtype=np.uint8)
+        )
+        with self.assertRaisesRegex(RuntimeError, "无法验证相邻截图重叠"):
+            scan.download_media()
+        scan.media.process.assert_called_once()
+        self.assertEqual(scan.result.media_stop_reason, "failed")
+
     def test_nickname_uses_top_blue_line_and_retains_confidence(self):
         reader = TextRecognizer()
         nickname = TextLine(
@@ -583,7 +644,10 @@ class FeedCaptureTests(unittest.TestCase):
         )
 
         def click(frame, target):
-            state["page"] = "viewer" if state["page"] == "original" else "dialog"
+            if target.name == "channel_close":
+                state["page"] = "original"
+            else:
+                state["page"] = "viewer" if state["page"] == "original" else "dialog"
 
         def right_click(frame, target):
             state["page"] = "menu"
@@ -602,13 +666,15 @@ class FeedCaptureTests(unittest.TestCase):
         driver.save_dialog.side_effect = save
         driver.close_viewer.side_effect = close
         driver.is_save_dialog.side_effect = lambda: state["page"] == "dialog"
+        driver.open_save_dialog.side_effect = lambda: state.update(page="dialog")
         driver.current_surface.side_effect = lambda: frames[state["page"]].surface
         controller.locator.is_enlarged_preview.return_value = embedded
         media = MediaCapture(
             controller,
             FeedCaptureConfig(
-                media_load_wait_seconds=0, media_load_timeout_seconds=0.01,
-                media_workflow="save_media"
+                media_load_wait_seconds=0,
+                media_load_timeout_seconds=0.01,
+                media_workflow="save_media",
             ),
             self.path,
         )
@@ -635,6 +701,43 @@ class FeedCaptureTests(unittest.TestCase):
         self.assertTrue(
             all(result.status == "verified" for result in media.controller.results)
         )
+
+    def test_shortcut_workflow_bypasses_context_menu(self):
+        media = self.make_media_capture(embedded=True)
+        media.config = media.config.model_copy(
+            update={"media_workflow": "save_media_shortcut"}
+        )
+        saved = media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        self.assertEqual(saved.kind, "image")
+        driver = media.controller.driver
+        driver.open_save_dialog.assert_called_once()
+        driver.right_click.assert_not_called()
+        driver.click.assert_called_once()
+        driver.save_dialog.assert_called_once()
+
+    def test_opened_channel_closes_tab_without_save_or_right_click(self):
+        from wemo2.collectors.controller import VideoChannelSkipped
+
+        media = self.make_media_capture(embedded=True)
+        label = TextLine(
+            text="视频号", score=0.99, bounds=Rect(x=50, y=20, width=50, height=20)
+        )
+        with Image.open(self.second.image_path) as image:
+            viewer_pixels = image.tobytes()
+        media.reader.channel_header.side_effect = lambda image, scale: (
+            label if image.tobytes() == viewer_pixels else None
+        )
+        close = self.anchor(self.second, 30).model_copy(
+            update={"name": "channel_close"}
+        )
+        media.controller.locator.locate_all.return_value = [close]
+        with self.assertRaises(VideoChannelSkipped):
+            media._save_media(self.first, Rect(x=10, y=40, width=80, height=80), 40)
+        driver = media.controller.driver
+        self.assertEqual(driver.click.call_count, 2)
+        driver.right_click.assert_not_called()
+        driver.open_save_dialog.assert_not_called()
+        driver.save_dialog.assert_not_called()
 
     def test_unconfirmed_embedded_viewer_stops_without_right_click_or_repeat(self):
         media = self.make_media_capture(embedded=True)
@@ -1120,6 +1223,7 @@ class FeedCaptureTests(unittest.TestCase):
     def test_media_targets_and_workflow_can_change_without_executor_branches(self):
         media = self.make_media_capture()
         profile = media.controller.profile
+        profile.media_workflows.pop("save_media_shortcut")
         workflow = profile.media_workflow("save_media")
         profile.media_targets["custom_export"] = MediaTargetSpec(
             kind="ocr",

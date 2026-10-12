@@ -48,7 +48,7 @@ class BaseDriver(ABC):
         """释放采集会话，不关闭用户的微信应用。"""
 
     def scroll(self, frame: Screenshot, target: LocatedTarget, steps: int) -> None:
-        """在目标区域向下滚动；不支持滚轮的平台需实现自己的输入方式。"""
+        """正数向下扫描、负数向上回看；不支持滚轮的平台需实现自己的输入方式。"""
         raise NotImplementedError("当前平台尚未实现列表滚动")
 
     def right_click(self, frame: Screenshot, target: LocatedTarget) -> None:

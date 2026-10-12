@@ -23,6 +23,7 @@ class MomentDetails(BaseModel):
     date_raw: str | None = None
     header_top: int | None = None  # 图像内头像顶部，只供采集端裁剪使用。
     is_video_channel: bool = False  # 视频号分享只留截图，不下载播放器内容。
+    is_advertisement: bool = False  # 昵称同行右侧广告标签；不归档、不下载。
 
     @model_validator(mode="after")
     def normalize_name(self):
@@ -191,6 +192,13 @@ class FeedCaptureConfig(BaseModel):
     enabled: bool = False
     region: Rect | None = None  # 未指定时使用 UiProfile 和 DPI 推算列表区域。
     max_screens: int = Field(default=20, ge=1, le=100, strict=True)
+    recent_days: int | None = Field(
+        default=None,
+        ge=1,
+        le=36500,
+        strict=True,
+        description="最近 N 个自然日（含采集开始当天）；不配置则不按日期停止",
+    )
     wheel_steps: int = Field(default=3, ge=1, le=10, strict=True)
     settle_seconds: float = Field(default=0.6, ge=0, le=10)
     timeout_seconds: float = Field(default=2.0, gt=0, le=60)
@@ -207,6 +215,8 @@ class FeedCaptureConfig(BaseModel):
         """加载的最短等待不得超过总超时，否则不会有机会校验就绪。"""
         if self.media_load_wait_seconds >= self.media_load_timeout_seconds:
             raise ValueError("媒体加载等待必须小于加载超时")
+        if self.recent_days is not None and not self.recognize_nickname:
+            raise ValueError("recent_days 需要开启 recognize_nickname 以识别日期")
         return self
 
 

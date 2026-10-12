@@ -23,6 +23,7 @@ class CliOptions(BaseModel):
 
     config: Path | None = None
     log_file: Path | None = None
+    user: str | None = None
 
 
 def show_version(value: bool) -> None:
@@ -44,9 +45,12 @@ def entry(
     version: bool = typer.Option(
         False, "--version", callback=show_version, is_eager=True, help="显示版本并退出"
     ),
+    user: str | None = typer.Option(
+        None, "--user", help="覆盖备份账号目录，便于隔离调试"
+    ),
 ) -> None:
     """保存共用 CLI 选项，未选择子命令时只显示帮助。"""
-    ctx.obj = CliOptions(config=config, log_file=log_file)
+    ctx.obj = CliOptions(config=config, log_file=log_file, user=user)
     if ctx.invoked_subcommand is None:
         console.print(ctx.get_help())
 
@@ -57,15 +61,21 @@ def _execute(
     config: Path | None,
     log_file: Path | None,
     use_memos: bool = False,
+    *,
+    user: str | None = None,
 ) -> None:
     root = ctx.obj or CliOptions()
     if config is None:
         config = root.config
     if log_file is None:
         log_file = root.log_file
+    if user is None:
+        user = root.user
     overrides = {}
     if log_file is not None:
         overrides["log_file"] = log_file
+    if user is not None:
+        overrides["account"] = user
     startup_sink = initialize_startup_logging()
     try:
         try:
@@ -93,9 +103,12 @@ def collect(
     log_file: Path | None = typer.Option(
         None, "--log-file", help="同时写入日志文件，默认只输出控制台"
     ),
+    user: str | None = typer.Option(
+        None, "--user", help="覆盖备份账号目录，便于隔离调试"
+    ),
 ) -> None:
     """采集朋友圈并按账号、日期、人物文案哈希去重归档。"""
-    _execute(ctx, "collect", config, log_file)
+    _execute(ctx, "collect", config, log_file, user=user)
 
 
 @cli.command()
@@ -108,9 +121,10 @@ def save(
     log_file: Path | None = typer.Option(
         None, "--log-file", help="同时写入日志文件，默认只输出控制台"
     ),
+    user: str | None = typer.Option(None, "--user", help="选择要保存的备份账号目录"),
 ) -> None:
     """读取已采集的朋友圈文件夹并交给存储器，不启动微信。"""
-    _execute(ctx, "save", config, log_file, memos)
+    _execute(ctx, "save", config, log_file, memos, user=user)
 
 
 def main() -> None:

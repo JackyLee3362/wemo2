@@ -37,6 +37,7 @@ class WindowsScreenshotCollector(BaseCollector):
         self.driver = WindowsDriver(
             config.window_title,
             config.window_process_id,
+            maximize_window=config.maximize_window,
             save_options=config.save_dialog,
         )
         self.screenshotter = WindowsScreenshotter(
@@ -75,7 +76,9 @@ class WindowsScreenshotCollector(BaseCollector):
                     self.media = MediaCapture(
                         self.controller, self.config.feed, self.config.screenshot_dir
                     )
-                    self.archive = MomentArchive(self.resource_dir, self.account)
+                    self.archive = MomentArchive(
+                        self.resource_dir, self.account, self.config.feed.recent_days
+                    )
                     # 先闭合并归档整条动态，第二阶段才按已确定的身份目录下载。
                     self.media.scan_only = True
                 self.feed = FeedCapture(

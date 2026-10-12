@@ -42,6 +42,7 @@ log_level = "INFO"
 platform = "windows"
 screenshot_dir = "data/screenshot"
 window_title = "微信"
+maximize_window = true # 默认启动时最大化微信；false 保留当前窗口大小。
 timezone = "Asia/Shanghai"
 theme = "dark"
 
@@ -49,6 +50,7 @@ theme = "dark"
 target = "moments_entry"
 
 [collector_options.feed]
+# recent_days = 3 # 最近 3 个自然日（含今天）；不配置则不按日期停止。
 enabled = true
 max_screens = 20
 wheel_steps = 3

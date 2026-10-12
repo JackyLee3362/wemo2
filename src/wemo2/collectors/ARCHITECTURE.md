@@ -138,6 +138,7 @@ collector = "windows_screenshot"
 [collector_options]
 platform = "windows"
 window_title = "微信"
+maximize_window = true # 连接时最大化主窗口，等待尺寸稳定后截图；false 保留原大小。
 screenshot_dir = "data/screenshot"
 timezone = "Asia/Shanghai"
 theme = "dark"

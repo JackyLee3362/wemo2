@@ -109,6 +109,25 @@ class FeedCaptureTests(unittest.TestCase):
             self.path,
         )
 
+    def test_date_limit_stops_before_next_scroll_and_allows_existing_downloads(self):
+        scan = self.scanner()
+        scan.media = MagicMock()
+
+        def stop_at_date(result, media):
+            result.stop_reason = "date_limit"
+
+        scan.on_progress = stop_at_date
+        scan.run(self.first)
+        self.assertEqual(scan.result.stop_reason, "date_limit")
+        self.controller.scroll.assert_not_called()
+        scan.media.process.reset_mock()
+        self.controller.capture.return_value = self.first
+        self.controller.locator.locate_all.side_effect = None
+        self.controller.locator.locate_all.return_value = []
+        scan.download_media()
+        scan.media.process.assert_called_once()
+        self.assertEqual(scan.result.media_stop_reason, "completed_visible_range")
+
     def test_overlap_checks_content_and_rejects_unrelated_frames(self):
         with (
             Image.open(self.first.image_path) as first,

@@ -111,6 +111,72 @@ class MomentArchiveTests(unittest.TestCase):
             paths[0].read_text(encoding="utf-8")
         )
 
+    def test_advertisement_is_not_archived_or_scheduled_for_download(self):
+        self.details.is_advertisement = True
+        archive = MomentArchive(self.root, "广告测试", recent_days=1)
+        archive.export(self.result, self.media)
+        self.assertEqual(archive.paths, [])
+        self.assertEqual(archive.downloads, [])
+        self.assertFalse(self.root.exists())
+        self.assertEqual(self.result.stop_reason, "max_screens")
+        self.assertTrue(self.segment.image_path.exists())
+
+    def test_recent_days_include_boundary_and_stop_before_older_post(self):
+        for days in (1, 2, 3):
+            with self.subTest(days=days):
+                self.result.stop_reason = "running"
+                archive = MomentArchive(self.root, f"最近{days}天", recent_days=days)
+                cutoff = self.time.date() - timedelta(days=days - 1)
+                self.details.approximate_date = cutoff
+                archive.export(self.result, self.media)
+                self.assertEqual(len(archive.downloads), 1)
+                # 下一条已超过日期范围；其后即使还有条目也不再归档。
+                older = self.path / f"older-{days}.png"
+                older.write_bytes(self.segment.image_path.read_bytes())
+                segment = self.segment.model_copy(update={"image_path": older})
+                self.result.segments = [segment]
+                self.details.approximate_date = cutoff - timedelta(days=1)
+                archive.export(self.result, self.media)
+                self.assertEqual(self.result.stop_reason, "date_limit")
+                self.assertEqual(len(archive.downloads), 1)
+                self.details.approximate_date = cutoff
+                archive.export(self.result, self.media)
+                self.assertEqual(len(archive.downloads), 1)
+
+    def test_unknown_date_does_not_trigger_date_stop(self):
+        self.details.approximate_date = None
+        archive = MomentArchive(self.root, "未知日期", recent_days=1)
+        archive.export(self.result, self.media)
+        self.assertEqual(self.result.stop_reason, "max_screens")
+        self.assertTrue(archive.paths)
+        self.assertEqual(archive.downloads, [])
+
+    def test_cutoff_stays_at_first_capture_day_when_run_crosses_midnight(self):
+        archive = MomentArchive(self.root, "跨天", recent_days=2)
+        self.result.segments = []
+        archive.export(self.result, self.media)
+        self.assertEqual(archive.cutoff_date, date(2026, 10, 10))
+        self.result.frames.append(
+            self.frame.model_copy(
+                update={
+                    "frame_id": "next-day",
+                    "captured_at": self.time + timedelta(days=1),
+                }
+            )
+        )
+        self.result.segments = [self.segment]
+        archive.export(self.result, self.media)
+        self.assertEqual(archive.cutoff_date, date(2026, 10, 10))
+        self.assertEqual(len(archive.downloads), 1)
+
+    def test_recent_days_validates_positive_integer_and_requires_recognition(self):
+        self.assertIsNone(FeedCaptureConfig().recent_days)
+        for value in (0, -1, True, 1.5, "3"):
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                FeedCaptureConfig(recent_days=value)
+        with self.assertRaisesRegex(ValidationError, "recognize_nickname"):
+            FeedCaptureConfig(recent_days=1, recognize_nickname=False)
+
     def test_download_is_registered_in_final_folder_without_second_copy(self):
         self.media.previews = []
         archive = self.export()
@@ -422,6 +488,46 @@ class MomentArchiveTests(unittest.TestCase):
 
 class MomentRecognitionTests(unittest.TestCase):
     """验证以采集时区推断到日，以及正文与图片文字、地点、评论的区分。"""
+
+    def test_advertisement_recognition_only_reads_right_header(self):
+        reader = TextRecognizer()
+        name = TextLine(
+            text="昵称", score=1, bounds=Rect(x=80, y=24, width=100, height=25)
+        )
+        label = TextLine(
+            text="广告", score=0.99, bounds=Rect(x=10, y=10, width=40, height=20)
+        )
+        with Image.new("RGB", (640, 450), (30, 30, 30)) as image:
+
+            def read_header(cropped):
+                self.assertEqual(cropped.size, (500, 220))
+                return [label]
+
+            reader.read = MagicMock(side_effect=read_header)
+            self.assertTrue(reader.is_advertisement(image, name, 1.25))
+            reader.read = MagicMock(
+                return_value=[label.model_copy(update={"text": "广告设计作品"})]
+            )
+            self.assertFalse(reader.is_advertisement(image, name, 1.25))
+            reader.read = MagicMock(
+                return_value=[label.model_copy(update={"score": 0.5})]
+            )
+            self.assertFalse(reader.is_advertisement(image, name, 1.25))
+
+    def test_post_details_marks_advertisement_before_parsing_caption(self):
+        reader = TextRecognizer()
+        name = TextLine(
+            text="昵称", score=1, bounds=Rect(x=80, y=24, width=100, height=25)
+        )
+        reader.read = MagicMock(return_value=[name])
+        reader.nickname = MagicMock(return_value=name)
+        reader.is_advertisement = MagicMock(return_value=True)
+        with Image.new("RGB", (640, 450), (30, 30, 30)) as image:
+            details = reader.post_details(
+                image, datetime.now(ZoneInfo("Asia/Shanghai")), 1.25
+            )
+        self.assertTrue(details.is_advertisement)
+        self.assertIsNone(details.text)
 
     def test_ocr_name_fragments_are_cleaned_before_returning_details(self):
         reader = TextRecognizer()

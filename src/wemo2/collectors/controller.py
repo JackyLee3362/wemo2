@@ -899,7 +899,8 @@ class UiController:
         self, reader: TextRecognizer, *, source: Screenshot | None = None
     ) -> bool:
         """识别视频号顶部标签旁的关闭图标，只关闭该标签并验证返回朋友圈。"""
-        frame = self.capture(follow_foreground=True)
+        # 启动时前台可能是终端，先激活已连接的微信；点击后才跟随同进程窗口。
+        frame = self.capture(follow_foreground=source is not None)
         if self._channel_header(frame, reader) is None:
             return False
 

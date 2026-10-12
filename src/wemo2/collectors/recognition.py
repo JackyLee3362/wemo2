@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
 from wemo2.collectors.airtest_logging import AirtestLogHandler
@@ -126,6 +126,9 @@ class TextRecognizer:
         lines = self.read(image)
         name = self.nickname(image, scale, search_height=image.height, lines=lines)
         details = MomentDetails()
+        if name is not None and self.is_advertisement(image, name, scale):
+            details.is_advertisement = True
+            return details
         tiles = media_tiles(image, scale)
         details.is_video_channel = self.is_channel_card(image, lines, tiles)
         footer = None
@@ -261,6 +264,29 @@ class TextRecognizer:
             pixels = np.array(crop).astype(int)
         blue = (pixels[:, :, 2] - pixels[:, :, 0] > 10) & (pixels[:, :, 2] > 90)
         return blue.mean() > 0.08
+
+    def is_advertisement(
+        self, image: Image.Image, name: TextLine, scale: float
+    ) -> bool:
+        """只识别昵称同行右侧的广告标签，增强浅灰文字，不匹配正文中的广告字样。"""
+        left = max(name.bounds.x + name.bounds.width, image.width - round(100 * scale))
+        top = max(0, name.bounds.y - round(12 * scale))
+        bottom = min(
+            image.height, name.bounds.y + name.bounds.height + round(12 * scale)
+        )
+        if left >= image.width or bottom <= top:
+            return False
+        with image.crop((left, top, image.width, bottom)) as header:
+            with ImageOps.autocontrast(header.convert("L")).convert("RGB") as contrast:
+                with contrast.resize(
+                    (contrast.width * 4, contrast.height * 4)
+                ) as enlarged:
+                    lines = self.read(enlarged)
+        for line in lines:
+            text = "".join(line.text.split())
+            if line.score >= 0.8 and re.fullmatch(r"广告[ⅴvV⌄∨▼▽﹀˅]*", text):
+                return True
+        return False
 
     def _gray_footer(self, image: Image.Image, line: TextLine) -> bool:
         import numpy as np

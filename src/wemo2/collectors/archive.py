@@ -2,6 +2,7 @@
 
 import hashlib
 import shutil
+from datetime import date, timedelta
 from pathlib import Path
 
 from loguru import logger
@@ -30,15 +31,26 @@ from wemo2.common.paths import resolve_resource_path
 class MomentArchive:
     """同账号按人物和文案合并资源，保留所有采集证据，不覆盖或删除既有媒体。"""
 
-    def __init__(self, resource_dir: Path, account: str):
+    def __init__(
+        self, resource_dir: Path, account: str, recent_days: int | None = None
+    ):
         self.account_dir = resource_dir / account
         self.account = account
         self.paths: list[Path] = []
         self.exported: set[Path] = set()
         self.downloads: list[MediaDownload] = []
+        self.recent_days = recent_days
+        self.cutoff_date: date | None = None
 
     def export(self, result: FeedCaptureResult, media: MediaCapture) -> None:
         """关联同一列表流中的截图与媒体；失败也保留已完成的截图及已验证文件。"""
+        if result.stop_reason == "date_limit":
+            return  # finally 再次归档时也不能越过截止条目。
+        if self.cutoff_date is None and self.recent_days is not None and result.frames:
+            self.cutoff_date = result.frames[0].captured_at.date() - timedelta(
+                days=self.recent_days - 1
+            )
+            logger.info("[时间范围] 采集 {} 及以后的朋友圈，含当天", self.cutoff_date)
         frames = {}
         for frame in result.frames:
             frames[frame.frame_id] = frame
@@ -60,6 +72,12 @@ class MomentArchive:
                         )
                     else:
                         details = MomentDetails()
+                    if details.is_advertisement:
+                        logger.info(
+                            "[广告跳过] 不归档、不下载，证据={}", segment.image_path
+                        )
+                        self.exported.add(segment.image_path)
+                        continue
                     if details.header_top is None:
                         logger.info(
                             "[归档跳过] 尚未同时确认头像和更多按钮，保留拼接证据：{}",
@@ -67,6 +85,21 @@ class MomentArchive:
                         )
                         self.exported.add(segment.image_path)
                         continue
+                    if self.cutoff_date is not None:
+                        if details.approximate_date is None:
+                            logger.warning(
+                                "[时间范围] 未识别到有效日期，不据此停止，人物={}，时间原文={}",
+                                details.person,
+                                details.date_raw,
+                            )
+                        elif details.approximate_date < self.cutoff_date:
+                            logger.info(
+                                "[时间停止] 日期 {} 早于 {}，不归档该条及后续朋友圈",
+                                details.approximate_date,
+                                self.cutoff_date,
+                            )
+                            result.stop_reason = "date_limit"
+                            return
                     top = details.header_top or 0
                     with image.crop((0, top, image.width, image.height)) as cropped:
                         self._save(

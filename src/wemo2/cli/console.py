@@ -13,10 +13,11 @@ error_console = Console(stderr=True)
 
 def show_collect_result(result: CollectResult, log_file: Path | None) -> None:
     """展示本次归档数量、停止原因和文件位置，不能声称已经上传远端。"""
+    reason = result.stop_reason
+    if reason == "date_limit":
+        reason = "已达到配置的日期范围（date_limit）"
     console.print(
-        Text(
-            f"采集完成：本次归档 {result.posts} 条朋友圈，停止原因：{result.stop_reason}"
-        )
+        Text(f"采集完成：本次归档 {result.posts} 条朋友圈，停止原因：{reason}")
     )
     for path in result.artifacts:
         if path.name == "post.json":

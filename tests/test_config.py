@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from wemo2.cli.commands import cli
 from wemo2.core.config import AppConfig, load_config
+from wemo2.core.registry import collectors
 
 
 class ConfigTests(unittest.TestCase):
@@ -46,6 +47,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.store, "pseudo")
         self.assertEqual(config.log_level, "INFO")
         self.assertEqual(config.collector, "pseudo")
+
+    def test_maximize_defaults_on_and_file_can_disable_it(self):
+        config = load_config(cwd=self.cwd)
+        collector = collectors.create(config.collector, config.model_dump())
+        self.assertTrue(collector.driver.maximize_window)
+        path = self.write_config("[collector_options]\nmaximize_window=false\n")
+        config = load_config(config_path=path, cwd=self.cwd)
+        collector = collectors.create(config.collector, config.model_dump())
+        self.assertFalse(collector.driver.maximize_window)
 
     def test_file_paths_and_cli_paths_use_separate_base_directories(self):
         path = self.write_config(
@@ -101,6 +111,27 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(launch.call_args.args[0], "save")
         self.assertTrue(launch.call_args.args[2])
+
+    def test_user_option_overrides_account_and_subcommand_overrides_root(self):
+        path = self.write_config('collector="pseudo"\naccount="configured"\n')
+        for args, expected in (
+            (["collect"], "configured"),
+            (["collect", "--user", "debug-1"], "debug-1"),
+            (["--user", "debug-2", "collect"], "debug-2"),
+            (["--user", "root", "collect", "--user", "child"], "child"),
+            (["save", "--user", "debug-1"], "debug-1"),
+        ):
+            with self.subTest(args=args), patch("wemo2.cli.runtime.launch") as launch:
+                result = self.invoke(["--config", str(path), *args])
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(launch.call_args.args[1].account, expected)
+
+    def test_user_option_rejects_invalid_directory_before_running(self):
+        for user in ("../default", "", "CON", "A/B"):
+            with self.subTest(user=user), patch("wemo2.cli.runtime.launch") as launch:
+                result = self.invoke(["collect", "--user", user])
+                self.assertEqual(result.exit_code, 2, result.output)
+                launch.assert_not_called()
 
     def test_cli_log_path_overrides_file_without_overriding_business_settings(self):
         path = self.write_config(

@@ -28,6 +28,9 @@ class WindowsCollectorConfig(BaseModel):
     )
     window_title: str = Field(default="微信", min_length=1)
     window_process_id: int | None = Field(default=None, gt=0)
+    maximize_window: bool = Field(
+        default=True, description="连接微信时最大化主窗口；关闭后保留原窗口大小"
+    )
     theme: str = "dark"
     controller: ControllerConfig = Field(default_factory=ControllerConfig)
     matcher: MatchConfig = Field(default_factory=MatchConfig)

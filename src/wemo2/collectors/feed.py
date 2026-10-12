@@ -233,6 +233,8 @@ class FeedCapture:
                 finally:
                     if self.media is not None and self.on_progress is not None:
                         self.on_progress(self.result, self.media)
+                if self.result.stop_reason == "date_limit":
+                    break
                 if index + 1 == self.config.max_screens:
                     self.result.stop_reason = "max_screens"
                     break
@@ -293,7 +295,7 @@ class FeedCapture:
             )
             self._write_manifest()
             return
-        if self.result.stop_reason not in ("max_screens", "no_progress"):
+        if self.result.stop_reason not in ("max_screens", "no_progress", "date_limit"):
             self.result.media_stop_reason = "scan_unverified"
             self._write_manifest()
             return

@@ -24,6 +24,46 @@ from wemo2.core.services import run_collect
 class WindowsScreenshotTests(unittest.TestCase):
     """验证 Windows 窗口筛选、截图裁切、颜色转换、焦点检查和会话释放。"""
 
+    def test_maximize_waits_for_final_size_before_returning(self):
+        driver = WindowsDriver()
+        driver.device = SimpleNamespace(handle=123)
+        driver.user32 = MagicMock()
+        driver.user32.IsZoomed.side_effect = [False, False, True, True, True, True]
+        driver.user32.IsIconic.return_value = False
+        larger = self.surface.model_copy(
+            update={"bounds": Rect(x=0, y=0, width=1920, height=1040)}
+        )
+        with (
+            patch.object(
+                driver,
+                "current_surface",
+                side_effect=[self.surface, larger, larger, larger],
+            ) as surface,
+            patch("wemo2.collectors.windows.driver.time.sleep"),
+        ):
+            driver._maximize_window()
+        driver.user32.ShowWindowAsync.assert_called_once_with(123, 3)
+        self.assertEqual(surface.call_count, 4)
+
+    def test_maximize_timeout_never_resends_window_command(self):
+        driver = WindowsDriver()
+        driver.device = SimpleNamespace(handle=123)
+        driver.user32 = MagicMock()
+        driver.user32.IsZoomed.return_value = False
+        with patch("wemo2.collectors.windows.driver.time.sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "最大化.*超时"):
+                driver._maximize_window()
+        self.assertEqual(sleep.call_count, 30)
+        driver.user32.ShowWindowAsync.assert_called_once_with(123, 3)
+
+    def test_already_maximized_window_is_not_resized(self):
+        driver = WindowsDriver()
+        driver.device = SimpleNamespace(handle=123)
+        driver.user32 = MagicMock()
+        driver.user32.IsZoomed.return_value = True
+        driver._maximize_window()
+        driver.user32.ShowWindowAsync.assert_not_called()
+
     def test_near_black_frame_with_one_white_pixel_is_rejected(self):
         image = Image.new("RGB", (80, 60), "black")
         image.putpixel((0, 0), (255, 255, 255))
@@ -383,6 +423,7 @@ class WindowsScreenshotTests(unittest.TestCase):
             driver = WindowsDriver(process_id=42)
             with patch.object(driver, "current_surface", return_value=self.surface):
                 self.assertEqual(driver.attach(), self.surface)
+            user32.IsZoomed.assert_called_once()
             create.assert_called_once_with(handle=123, foreground=False)
             psutil.Process.assert_called_once_with(42)
             driver.close()

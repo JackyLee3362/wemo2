@@ -328,6 +328,39 @@ class UiControllerTests(unittest.TestCase):
         self.assertEqual(result.status, "executed")
         self.driver.follow_foreground.assert_called_once()
 
+    def test_startup_channel_check_activates_wechat_from_terminal(self):
+        driver = WindowsDriver()
+        driver.device = MagicMock()
+        driver.device.handle = 123
+        driver.user32 = MagicMock()
+        driver.session_process_id = 42
+        driver.user32.GetForegroundWindow.return_value = 999  # 启动命令的终端。
+        metrics = {76: 0, 77: 0, 78: 1200, 79: 800}
+        driver.user32.GetSystemMetrics.side_effect = metrics.__getitem__
+
+        def activate():
+            driver.user32.GetForegroundWindow.return_value = 123
+
+        driver.device.set_foreground.side_effect = activate
+        self.controller.driver = driver
+        reader = MagicMock()
+        reader.channel_header.return_value = None
+        with patch.object(driver, "current_surface", return_value=self.surface):
+            self.assertFalse(self.controller.dismiss_channel(reader))
+        driver.device.set_foreground.assert_called_once()
+        reader.channel_header.assert_called_once()
+        driver.user32.GetWindowThreadProcessId.assert_not_called()
+        driver.device.touch.assert_not_called()
+
+    def test_after_click_channel_check_still_rejects_foreign_foreground(self):
+        self.driver.follow_foreground.side_effect = RuntimeError("前台不属于微信进程")
+        reader = MagicMock()
+        with self.assertRaisesRegex(RuntimeError, "前台不属于微信进程"):
+            self.controller.dismiss_channel(reader, source=self.before)
+        self.driver.prepare_capture.assert_not_called()
+        reader.channel_header.assert_not_called()
+        self.driver.click.assert_not_called()
+
     def test_windows_swipe_converts_client_coordinates_and_refuses_outside_endpoints(
         self,
     ):

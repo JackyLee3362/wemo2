@@ -33,10 +33,12 @@ class WindowsDriver(BaseDriver):
         window_title: str = "微信",
         process_id: int | None = None,
         *,
+        maximize_window: bool = True,
         save_options: SaveDialogConfig | None = None,
     ):
         self.window_title = window_title
         self.process_id = process_id
+        self.maximize_window = maximize_window
         self.device = None
         self.user32 = None
         self.previous_dpi = None
@@ -65,6 +67,10 @@ class WindowsDriver(BaseDriver):
         if self.previous_dpi is None:
             raise ctypes.WinError(ctypes.get_last_error())
         self.user32.IsIconic.argtypes = [wintypes.HWND]
+        self.user32.IsZoomed.argtypes = [wintypes.HWND]
+        self.user32.IsZoomed.restype = wintypes.BOOL
+        self.user32.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
+        self.user32.ShowWindowAsync.restype = wintypes.BOOL
         self.user32.IsWindow.argtypes = [wintypes.HWND]
         self.user32.IsWindowVisible.argtypes = [wintypes.HWND]
         self.user32.GetClientRect.argtypes = [
@@ -107,6 +113,10 @@ class WindowsDriver(BaseDriver):
             )
         self.device = create_device(handle=matches[0].handle, foreground=False)
         self.session_process_id = matches[0].process_id
+        if self.maximize_window:
+            self._maximize_window()
+        else:
+            logger.info("[窗口最大化] 配置已关闭，保留当前窗口大小")
         surface = self.current_surface()
         logger.info(
             "[窗口连接] 已连接，进程={}，窗口={}，客户区={}×{}",
@@ -116,6 +126,39 @@ class WindowsDriver(BaseDriver):
             surface.bounds.height,
         )
         return surface
+
+    def _maximize_window(self) -> None:
+        """仅在连接时最大化选定窗口，有限等待尺寸稳定后再允许截图。"""
+        handle = self.device.handle
+        if self.user32.IsZoomed(handle):
+            logger.info("[窗口最大化] 微信已经最大化，跳过重复操作")
+            return
+        logger.info("[窗口最大化] 开始，窗口={}", handle)
+        # 异步提交一次，避免微信无响应时卡在窗口消息调用中。
+        if not self.user32.ShowWindowAsync(handle, 3):  # SW_MAXIMIZE
+            raise RuntimeError("无法提交微信窗口最大化请求")
+        previous = None
+        stable_samples = 0
+        for _ in range(30):
+            time.sleep(0.1)
+            if not self.user32.IsZoomed(handle) or self.user32.IsIconic(handle):
+                previous = None
+                stable_samples = 0
+                continue
+            surface = self.current_surface()
+            if surface == previous:
+                stable_samples += 1
+            else:
+                stable_samples = 0
+            previous = surface
+            if stable_samples >= 2:
+                logger.info(
+                    "[窗口最大化] 已确认，客户区={}×{}",
+                    surface.bounds.width,
+                    surface.bounds.height,
+                )
+                return
+        raise RuntimeError("等待微信最大化及窗口尺寸稳定超时（3 秒）")
 
     def current_surface(self) -> Surface:
         if self.device is None or self.user32 is None:
